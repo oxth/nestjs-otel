@@ -1,5 +1,6 @@
 import { type Attributes, context, createContextKey, type Span, SpanKind } from '@opentelemetry/api';
 import { getDefaultRedactor, serializeBody } from '../redact/redactor';
+import { CENSOR } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults } from '../tracing/decorators';
 import { handleResult, runInSpan } from '../tracing/wrap';
@@ -18,6 +19,15 @@ export interface OrmCall {
   params?: () => unknown;
   /** Default `'leaf'`. */
   scope?: OrmScope;
+}
+
+/**
+ * Raw positional parameters (`manager.query(sql, [..])`, `em.execute(sql, [..])`) have no keys for the
+ * redactor to judge, so every value is censored (the length is kept). Keyed objects pass through unchanged
+ * and go through the redactor as usual.
+ */
+export function censorPositional(params: unknown): unknown {
+  return Array.isArray(params) ? params.map(() => CENSOR) : params;
 }
 
 const ORM_SCOPE = createContextKey('@oxth/nestjs-otel.orm-scope');

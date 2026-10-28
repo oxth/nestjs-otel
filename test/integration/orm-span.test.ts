@@ -1,6 +1,6 @@
 import { SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { runOrmSpan } from '../../src/orm/orm-span';
+import { censorPositional, runOrmSpan } from '../../src/orm/orm-span';
 import { type MethodWrapper, patchMethods, unpatchMethods } from '../../src/orm/patch';
 import { resolveDbSettings, setDbSettings } from '../../src/orm/settings';
 import { getDefaultRedactor } from '../../src/redact/redactor';
@@ -253,5 +253,17 @@ describe('patchMethods', () => {
     expect(A.prototype.m.length).toBe(2);
     expect(patchMethods(undefined, ['m'], (o) => o)).toEqual([]);
     unpatchMethods(undefined, ['m']);
+  });
+});
+
+describe('censorPositional', () => {
+  it('censors every positional value, keeping the length', () => {
+    expect(censorPositional(['hunter2', 42, null])).toEqual(['[REDACTED]', '[REDACTED]', '[REDACTED]']);
+  });
+  it('leaves keyed params to the redactor', () => {
+    const keyed = { email: 'a', password: 'p' };
+    expect(censorPositional(keyed)).toBe(keyed);
+    expect(getDefaultRedactor().redact(censorPositional(keyed))).toEqual({ email: 'a', password: '[REDACTED]' });
+    expect(censorPositional(undefined)).toBeUndefined();
   });
 });

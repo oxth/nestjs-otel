@@ -6,7 +6,7 @@ import {
 import { CENSOR, PACKAGE_VERSION } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { toDbSystemName } from './db-system';
-import { type OrmCall, isInsideOrmLeaf, runOrmSpan } from './orm-span';
+import { type OrmCall, censorPositional, isInsideOrmLeaf, runOrmSpan } from './orm-span';
 import { type MethodWrapper, patchMethods, unpatchMethods } from './patch';
 
 export const MIKRO_EM_METHODS: readonly string[] = [
@@ -134,7 +134,7 @@ function emCall(coreExports: any, self: any, method: string, args: unknown[]): O
   const base = { orm: 'mikro-orm' as const, operation: method, system: systemOf(self?.getPlatform?.()) };
   if (method === 'transactional') return { ...base, scope: 'container' };
   if (NO_TARGET.has(method)) return base;
-  if (method === 'execute') return { ...base, params: () => args[1] };
+  if (method === 'execute') return { ...base, params: () => censorPositional(args[1]) };
 
   const first = args[0];
   if (first && typeof first === 'object' && !isTarget(coreExports, first)) {

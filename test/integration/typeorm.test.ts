@@ -146,7 +146,7 @@ describe('TypeORM instrumentation', () => {
     expect(s.status.code).toBe(SpanStatusCode.ERROR);
     expect(s.events.some((e) => e.name === 'exception')).toBe(true);
     expect(s.attributes['db.orm.entity']).toBeUndefined();
-    expect(s.attributes['db.orm.params']).toBe('["hunter2"]');
+    expect(s.attributes['db.orm.params']).toBe('["[REDACTED]"]');
   });
 
   it('failure with keyed params redacts sensitive keys', async () => {

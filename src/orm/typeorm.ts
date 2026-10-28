@@ -6,7 +6,7 @@ import {
 import { CENSOR, PACKAGE_VERSION } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { toDbSystemName } from './db-system';
-import { type OrmCall, isInsideOrmLeaf, runOrmSpan } from './orm-span';
+import { type OrmCall, censorPositional, isInsideOrmLeaf, runOrmSpan } from './orm-span';
 import { type MethodWrapper, patchMethods, unpatchMethods } from './patch';
 
 export const TYPEORM_MANAGER_METHODS: readonly string[] = [
@@ -133,7 +133,7 @@ function describeTarget(self: any, target: unknown): { entity?: string; collecti
 function managerCall(moduleExports: any, self: any, method: string, args: unknown[]): OrmCall {
   const base = { orm: 'typeorm' as const, operation: method, system: systemOf(self) };
   if (method === 'transaction') return { ...base, scope: 'container' };
-  if (method === 'query') return { ...base, params: () => args[1] };
+  if (method === 'query') return { ...base, params: () => censorPositional(args[1]) };
 
   const first = args[0];
   if (INSTANCE_FORM.has(method) && !(args.length > 1 && isTarget(moduleExports, first))) {

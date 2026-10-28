@@ -238,14 +238,14 @@ OtelModule.forRoot({ db: { captureParams: 'error', maxParamsBytes: 2048 } });
 
 - **Query builder failures** capture `{ values, parameters }`. TypeORM's generated `orm_param_N` and MikroORM's
   positional values are always `[REDACTED]`; keyed fields (e.g. `password`) go through the redactor.
-- **Raw positional parameters** (`manager.query(sql, [..])`, `em.execute(sql, [..])`) are captured on failure with
-  their values intact; only JWT/Bearer patterns are masked. Avoid passing secrets that way, or set
-  `db.captureParams: 'never'`.
+- **Raw positional parameters** (`manager.query(sql, [..])`, `em.execute(sql, [..])`) are always censored: every
+  value is `[REDACTED]` (the array length is kept). Keyed parameter objects go through the redactor.
 - **Driver spans**: `pg` and `mysql2` query text has literals replaced with `?` (so `LIMIT 10` shows `LIMIT ?`).
   MongoDB values are masked by the instrumentation.
-- **MikroORM 6** puts the interpolated SQL into its error messages. The library masks that statement in the span
-  status, exception events and `OtelLogger` records. This is best effort: the last 64 failing statements are
-  tracked. Pino log lines are not masked, and database-native error details (e.g. MySQL
+- **MikroORM 6** puts the interpolated SQL into its error messages. For errors from traced ORM calls, the library
+  masks that statement in the span status, exception events and `OtelLogger` records (raw knex usage is not
+  covered). This is best effort: the last 64 failing statements are tracked, within a 2 MB budget (oldest first
+  out). Pino log lines are not masked, and database-native error details (e.g. MySQL
   `Duplicate entry 'x' for key ...`, a pg error detail) may contain values.
 
 ### Errors

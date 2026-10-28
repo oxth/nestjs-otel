@@ -140,11 +140,11 @@ describe('MikroORM instrumentation', () => {
     ]);
   });
 
-  it('raw execute failure attaches its positional params (documented exception)', async () => {
-    await expect(em.execute('SELECT * FROM nope WHERE password = ?', ['hunter2'])).rejects.toThrow();
+  it('raw execute failure attaches its positional params, every value censored', async () => {
+    await expect(em.execute('SELECT * FROM nope WHERE password = ? AND n = ?', ['hunter2', 42])).rejects.toThrow();
     const s = only('MikroORM execute');
     expect(s.status.code).toBe(SpanStatusCode.ERROR);
-    expect(s.attributes['db.orm.params']).toBe('["hunter2"]');
+    expect(s.attributes['db.orm.params']).toBe('["[REDACTED]","[REDACTED]"]');
   });
 
   it('query builder getResultList traced with entity and no params on success', async () => {
