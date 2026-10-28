@@ -4,7 +4,7 @@ import { BadRequestException, InternalServerErrorException, NotFoundException } 
 import { RpcException } from '@nestjs/microservices';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { classifyError } from '../../src/errors/classify';
-import { formatStack, hasStackRecorded, recordError } from '../../src/errors/record';
+import { dedupeStoreStats, formatStack, hasStackRecorded, markStackRecorded, recordError } from '../../src/errors/record';
 import { createRedactor, setDefaultRedactor } from '../../src/redact/redactor';
 
 const exporter = new InMemorySpanExporter();
@@ -67,6 +67,19 @@ describe('errors', () => {
     expect(hasStackRecorded(sibling, err.stack!)).toBe(true);
     expect(hasStackRecorded(sibling, err.stack!.slice(0, 10))).toBe(false);
     expect(hasStackRecorded(tracer.startSpan('other trace'), err.stack!)).toBe(false);
+  });
+  it('dedupe store stays bounded for huge errors and many traces', () => {
+    const err = new Error('x'.repeat(1024 * 1024), { cause: new Error('y'.repeat(1024 * 1024)) });
+    const s = tracer.startSpan('huge');
+    recordError(s, err, opts);
+    expect(hasStackRecorded(s, err.stack!)).toBe(true);
+    expect(hasStackRecorded(s, formatStack(err))).toBe(true);
+    for (let i = 0; i < 20; i++) markStackRecorded(s, `Error: ${i}\n${'z'.repeat(10_000)}`);
+    for (let i = 0; i < 600; i++) markStackRecorded(tracer.startSpan(`t${i}`), `Error: t${i}`);
+    const stats = dedupeStoreStats();
+    expect(stats.maxKeyLength).toBeLessThanOrEqual(2048);
+    expect(stats.traces).toBeLessThanOrEqual(256);
+    expect(stats.maxStacksPerTrace).toBeLessThanOrEqual(8);
   });
   it('primitive throws are always recorded as events', () => {
     const s = tracer.startSpan('s');

@@ -6,9 +6,12 @@ const MAX_CAUSE_DEPTH = 5;
 const recordedErrors = new WeakSet<object>();
 const recordedStacks = new WeakMap<Span, Set<string>>();
 // Stacks recorded per trace, so an error recorded on an inner span isn't recorded again
-// when it is logged later from an outer span of the same trace. Bounded: oldest traces drop out.
-const MAX_TRACKED_TRACES = 1000;
-const MAX_STACKS_PER_TRACE = 50;
+// when it is logged later from an outer span of the same trace. Bounded: oldest traces drop out,
+// and each stack is stored as a short key (see `dedupeKey`).
+const MAX_TRACKED_TRACES = 256;
+const MAX_STACKS_PER_TRACE = 8;
+const MAX_KEY_LENGTH = 2048;
+const CAUSE_SEPARATOR = '\nCaused by: ';
 const stacksByTrace = new Map<string, string[]>();
 
 function describe(err: unknown): string {
@@ -40,24 +43,32 @@ function traceKey(span: Span): string | undefined {
 }
 
 /**
- * Whether `stack` was already recorded on `span` or on any span of its trace. A stack also
- * counts as recorded when it is the head of a recorded `formatStack` string: Nest logs
- * `err.stack`, while `recordError` stores the stack followed by its `Caused by:` chain.
+ * Dedupe key of a stack: its head before the first `Caused by:` (Nest logs `err.stack`, while
+ * `recordError` stores the stack followed by its cause chain), capped at 2 KB.
  */
+function dedupeKey(stack: string): string {
+  const cut = stack.indexOf(CAUSE_SEPARATOR);
+  const head = cut === -1 ? stack : stack.slice(0, cut);
+  return head.length > MAX_KEY_LENGTH ? head.slice(0, MAX_KEY_LENGTH) : head;
+}
+
+/** Whether `stack` (or a stack with the same head) was already recorded on `span` or on any span of its trace. */
 export function hasStackRecorded(span: Span, stack: string): boolean {
-  if (recordedStacks.get(span)?.has(stack)) return true;
+  const k = dedupeKey(stack);
+  if (recordedStacks.get(span)?.has(k)) return true;
   const key = traceKey(span);
   const stacks = key === undefined ? undefined : stacksByTrace.get(key);
-  return stacks?.some((s) => s === stack || s.startsWith(`${stack}\nCaused by: `)) ?? false;
+  return stacks?.includes(k) ?? false;
 }
 
 export function markStackRecorded(span: Span, stack: string): void {
+  const k = dedupeKey(stack);
   let set = recordedStacks.get(span);
   if (!set) {
     set = new Set();
     recordedStacks.set(span, set);
   }
-  set.add(stack);
+  if (set.size < MAX_STACKS_PER_TRACE) set.add(k);
 
   const key = traceKey(span);
   if (key === undefined) return;
@@ -67,8 +78,9 @@ export function markStackRecorded(span: Span, stack: string): void {
     stacks = [];
     stacksByTrace.set(key, stacks);
   }
+  if (stacks.includes(k)) return;
   if (stacks.length >= MAX_STACKS_PER_TRACE) stacks.shift();
-  stacks.push(stack);
+  stacks.push(k);
 }
 
 function errorType(err: unknown): string {
@@ -113,4 +125,15 @@ export function recordError(span: Span, err: unknown, opts: ClassifyOptions): vo
     markStackRecorded(span, stack);
   }
   span.setStatus({ code: SpanStatusCode.ERROR, message });
+}
+
+/** Test hook: size of the per-trace dedupe store. */
+export function dedupeStoreStats(): { traces: number; maxStacksPerTrace: number; maxKeyLength: number } {
+  let maxStacksPerTrace = 0;
+  let maxKeyLength = 0;
+  for (const stacks of stacksByTrace.values()) {
+    maxStacksPerTrace = Math.max(maxStacksPerTrace, stacks.length);
+    for (const s of stacks) maxKeyLength = Math.max(maxKeyLength, s.length);
+  }
+  return { traces: stacksByTrace.size, maxStacksPerTrace, maxKeyLength };
 }
