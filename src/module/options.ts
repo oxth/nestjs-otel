@@ -1,4 +1,5 @@
 import type { ClassifyOptions } from '../errors/classify';
+import { resolveDbSettings, type DbOptions, type DbSettings } from '../orm/settings';
 import { createRedactor, type RedactOptions, type Redactor } from '../redact/redactor';
 import { DEFAULT_MAX_BODY_BYTES } from '../shared/constants';
 
@@ -24,6 +25,7 @@ export interface OtelModuleOptions {
     getUserId?: (req: any) => string | number | undefined;
   };
   redact?: RedactOptions;
+  db?: DbOptions;
 }
 
 export interface ResolvedOtelOptions {
@@ -46,6 +48,7 @@ export interface ResolvedOtelOptions {
   };
   redact: RedactOptions;
   redactor: Redactor;
+  db: DbSettings;
   classify: ClassifyOptions;
 }
 
@@ -86,6 +89,7 @@ export function resolveOptions(o: OtelModuleOptions = {}): ResolvedOtelOptions {
     },
     redact,
     redactor: createRedactor(redact),
+    db: resolveDbSettings(o.db),
     classify: { treat4xxAsError },
   };
 }

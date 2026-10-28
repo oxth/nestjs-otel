@@ -14,6 +14,7 @@ import request from 'supertest';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { OtelModule, type OtelModuleOptions, TraceService } from '../../src/index';
 import { OTEL_OPTIONS, type ResolvedOtelOptions, resolveOptions } from '../../src/module/options';
+import { getDbSettings, resolveDbSettings, setDbSettings } from '../../src/orm/settings';
 import { getGlobalState } from '../../src/shared/global-state';
 import { getClassifyDefaults, setClassifyDefaults } from '../../src/tracing/decorators';
 import { setupInMemoryTracing } from './helpers/tracing';
@@ -179,5 +180,11 @@ describe('OtelModule', () => {
   it('exports TraceService globally', async () => {
     await boot([ConsumerModule, OtelModule.forRoot()]);
     expect(app!.get(UsesTrace).traces).toBeInstanceOf(TraceService);
+  });
+
+  it('forRoot({ db }) sets global db settings', async () => {
+    await boot([OtelModule.forRoot({ db: { captureParams: 'never' } })]);
+    expect(getDbSettings().captureParams).toBe('never');
+    setDbSettings(resolveDbSettings());
   });
 });

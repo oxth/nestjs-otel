@@ -3,11 +3,16 @@ export interface SdkHandle {
   forceFlush(): Promise<void>;
 }
 
+import type { DbSettings } from '../orm/settings';
+import type { Redactor } from '../redact/redactor';
+
 export interface GlobalState {
   sdk?: SdkHandle;
   registered: boolean;
   processMonitorInstalled?: boolean;
   warned: Set<string>;
+  redactor?: Redactor;
+  db?: DbSettings;
 }
 
 const STATE_KEY = Symbol.for('@oxth/nestjs-otel.state');
