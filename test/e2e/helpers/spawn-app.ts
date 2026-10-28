@@ -18,6 +18,27 @@ const ENTRIES = {
 } as const;
 
 const START_TIMEOUT_MS = 20_000;
+
+/** Every child that has not exited yet, so failed tests and a dying runner can't leak apps. */
+const live = new Set<ChildProcess>();
+
+// Last resort: if the test runner process itself exits, take the children down with it.
+process.once('exit', () => {
+  for (const child of live) child.kill('SIGKILL');
+});
+
+/** Kills every app still running. Registered as an `afterEach` in test/e2e/setup.ts. */
+export async function stopAllApps(signal: NodeJS.Signals = 'SIGKILL'): Promise<void> {
+  await Promise.all(
+    [...live].map(
+      (child) =>
+        new Promise<void>((resolve) => {
+          child.once('exit', () => resolve());
+          if (child.exitCode !== null || child.signalCode !== null || !child.kill(signal)) resolve();
+        }),
+    ),
+  );
+}
 const STOP_TIMEOUT_MS = 10_000;
 
 /** Strip anything from the test runner's env that would leak into the child's OTel or Node config. */
@@ -57,7 +78,13 @@ export function spawnApp(o: {
   let stderr = '';
   child.stdout!.setEncoding('utf8').on('data', (d: string) => (stdout += d));
   child.stderr!.setEncoding('utf8').on('data', (d: string) => (stderr += d));
-  const exited = new Promise<number | null>((resolve) => child.once('exit', (code) => resolve(code)));
+  live.add(child);
+  const exited = new Promise<number | null>((resolve) =>
+    child.once('exit', (code) => {
+      live.delete(child);
+      resolve(code);
+    }),
+  );
 
   let started = false;
   return new Promise<RunningApp>((resolve, reject) => {
