@@ -196,6 +196,8 @@ export function patchTypeorm(moduleExports: any): void {
       const manager: MethodWrapper = (original, name) =>
         traced(original, (self, args) => managerCall(moduleExports, self, name, args));
       patchMethods(protoOf(moduleExports, 'EntityManager'), TYPEORM_MANAGER_METHODS, manager);
+      // MongoEntityManager overrides find*, insert, update, delete, count*: patch its own overrides only.
+      patchMethods(protoOf(moduleExports, 'MongoEntityManager'), TYPEORM_MANAGER_METHODS, manager, { ownOnly: true });
 
       const select: MethodWrapper = (original, name) => traced(original, (self) => queryBuilderCall(self, name));
       patchMethods(protoOf(moduleExports, 'SelectQueryBuilder'), TYPEORM_SELECT_QB_METHODS, select);
@@ -215,6 +217,7 @@ export function unpatchTypeorm(moduleExports: any): void {
   safely(
     'unpatch typeorm',
     () => {
+      unpatchMethods(protoOf(moduleExports, 'MongoEntityManager'), TYPEORM_MANAGER_METHODS);
       unpatchMethods(protoOf(moduleExports, 'EntityManager'), TYPEORM_MANAGER_METHODS);
       unpatchMethods(protoOf(moduleExports, 'SelectQueryBuilder'), TYPEORM_SELECT_QB_METHODS);
       for (const cls of TYPEORM_WRITE_QB_CLASSES) unpatchMethods(protoOf(moduleExports, cls), EXECUTE);

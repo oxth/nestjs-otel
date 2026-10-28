@@ -265,6 +265,44 @@ describe('TypeORM instrumentation', () => {
     expect(() => patchTypeorm(undefined)).not.toThrow();
   });
 
+  it('MongoEntityManager own overrides are traced; inherited methods are not shadowed', () => {
+    class EntityManager {
+      find() {
+        return 'base';
+      }
+      save() {
+        return 'saved';
+      }
+    }
+    class MongoEntityManager extends EntityManager {
+      override find() {
+        return 'mongo';
+      }
+    }
+    const fake = { EntityManager, MongoEntityManager };
+    patchTypeorm(fake);
+    try {
+      expect(new MongoEntityManager().find()).toBe('mongo');
+      expect(only('TypeORM find')).toBeDefined();
+      expect(Object.hasOwn(MongoEntityManager.prototype, 'save')).toBe(false);
+      expect(new MongoEntityManager().save()).toBe('saved');
+    } finally {
+      unpatchTypeorm(fake);
+    }
+    expect((MongoEntityManager.prototype.find as unknown as Record<symbol, unknown>)[ORIGINAL]).toBeUndefined();
+    expect(Object.hasOwn(MongoEntityManager.prototype, 'save')).toBe(false);
+    expect(new MongoEntityManager().find()).toBe('mongo');
+  });
+
+  it('real MongoEntityManager own methods carry the patch marker', () => {
+    const proto = typeorm.MongoEntityManager.prototype as unknown as Record<string, Record<symbol, unknown>>;
+    for (const name of ['find', 'findOneBy', 'insert', 'count']) {
+      expect(Object.hasOwn(proto, name)).toBe(true);
+      expect(proto[name]![ORIGINAL]).toBeDefined();
+    }
+    expect(Object.hasOwn(proto, 'save')).toBe(false);
+  });
+
   it('patchTypeorm is idempotent', async () => {
     patchTypeorm(typeorm);
     await ds.manager.find('User');
@@ -279,6 +317,9 @@ describe('unpatchTypeorm', () => {
     try {
       expect((typeorm.EntityManager.prototype.find as unknown as Record<symbol, unknown>)[ORIGINAL]).toBeUndefined();
       expect(typeorm.EntityManager.prototype.find).not.toBe(before);
+      const mongo = typeorm.MongoEntityManager.prototype as unknown as Record<string, Record<symbol, unknown>>;
+      expect(mongo.find![ORIGINAL]).toBeUndefined();
+      expect(Object.hasOwn(mongo, 'save')).toBe(false);
     } finally {
       patchTypeorm(typeorm);
     }

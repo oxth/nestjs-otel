@@ -15,12 +15,19 @@ type Marked = ((...a: any[]) => any) & {
 
 /**
  * Replaces each listed method on `proto` with `wrapper(original, name)`. Absent, non-function and
- * already patched methods are skipped. Returns the names actually patched.
+ * already patched methods are skipped. With `ownOnly`, methods `proto` only inherits are skipped too
+ * (for a subclass whose base prototype is patched separately). Returns the names actually patched.
  */
-export function patchMethods(proto: object | undefined, methods: readonly string[], wrapper: MethodWrapper): string[] {
+export function patchMethods(
+  proto: object | undefined,
+  methods: readonly string[],
+  wrapper: MethodWrapper,
+  opts?: { ownOnly?: boolean },
+): string[] {
   const patched: string[] = [];
   if (!proto) return patched;
   for (const name of methods) {
+    if (opts?.ownOnly && !Object.hasOwn(proto, name)) continue;
     const original = (proto as Record<string, unknown>)[name];
     if (typeof original !== 'function' || (original as Marked)[ORIGINAL]) continue;
     const ok = safely(
@@ -41,9 +48,11 @@ export function patchMethods(proto: object | undefined, methods: readonly string
   return patched;
 }
 
+/** Restores methods patched on `proto` itself; methods it only inherits are left alone. */
 export function unpatchMethods(proto: object | undefined, methods: readonly string[]): void {
   if (!proto) return;
   for (const name of methods) {
+    if (!Object.hasOwn(proto, name)) continue;
     const current = (proto as Record<string, unknown>)[name] as Marked | undefined;
     const original = typeof current === 'function' ? current[ORIGINAL] : undefined;
     if (!original) continue;
