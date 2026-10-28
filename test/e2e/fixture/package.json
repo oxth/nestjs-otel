@@ -4,17 +4,27 @@
   "private": true,
   "description": "Fixture app for @oxth/nestjs-otel e2e tests. Installed and built into <os tmpdir>/oxth-nestjs-otel-e2e-<hash>/fixture by test/e2e/global-setup.ts.",
   "dependencies": {
+    "@mikro-orm/core": "MIKRO_VERSION",
+    "@mikro-orm/mongodb": "MIKRO_VERSION",
+    "@mikro-orm/mysql": "MIKRO_VERSION",
+    "@mikro-orm/nestjs": "MIKRO_NESTJS_VERSION",
+    "@mikro-orm/postgresql": "MIKRO_VERSION",
     "@nestjs/common": "NEST_VERSION",
     "@nestjs/core": "NEST_VERSION",
     "@nestjs/platform-express": "NEST_VERSION",
     "@nestjs/platform-fastify": "NEST_VERSION",
+    "@nestjs/typeorm": "NEST_TYPEORM_VERSION",
     "@opentelemetry/api": "^1.10.0",
-    "@types/node": "^26.6.5",
     "@oxth/nestjs-otel": "OXTH_TARBALL",
+    "@types/node": "^26.6.5",
+    "mongodb": "^7.0.0",
+    "mysql2": "^3.24.6",
     "nestjs-pino": "^5.3.1",
+    "pg": "^8.23.1",
     "pino": "^10.4.0",
     "pino-http": "^11.0.0",
     "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2"
+    "rxjs": "^7.8.2",
+    "typeorm": "TYPEORM_VERSION"
   }
 }

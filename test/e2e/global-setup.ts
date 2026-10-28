@@ -3,6 +3,35 @@ import { cpSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } f
 import { join, relative } from 'node:path';
 import { FIXTURE_DIR, FIXTURE_SRC_DIR, ROOT_DIR, TMP_DIR } from './paths';
 
+/** Core Nest packages that follow `NEST_VERSION`. */
+const NEST_CORE = ['common', 'core', 'platform-express', 'platform-fastify', 'microservices', 'testing'].map(
+  (n) => `@nestjs/${n}`,
+);
+
+/** First number in a version or range (`'12'` → 12, `'^0.3'` → 0, `'^6'` → 6). */
+function major(range: string): number {
+  const m = /\d+/.exec(range);
+  if (!m) throw new Error(`no major version in ${JSON.stringify(range)}`);
+  return Number(m[0]);
+}
+
+/**
+ * The fixture's dependency versions for `NEST_VERSION` (default 12), `TYPEORM_VERSION` (default ^1) and
+ * `MIKRO_VERSION` (default ^7). Integrations (`@nestjs/typeorm`, `@mikro-orm/nestjs`) follow the major of
+ * the package they integrate.
+ */
+function fixtureVersions(name: string): string | undefined {
+  const nest = process.env.NEST_VERSION ?? '12';
+  const typeorm = process.env.TYPEORM_VERSION ?? '^1';
+  const mikro = process.env.MIKRO_VERSION ?? '^7';
+  if (NEST_CORE.includes(name)) return nest;
+  if (name === '@nestjs/typeorm') return `^${major(nest)}`;
+  if (name === 'typeorm') return typeorm;
+  if (name === '@mikro-orm/nestjs') return `^${major(mikro)}`;
+  if (name.startsWith('@mikro-orm/')) return mikro;
+  return undefined;
+}
+
 function run(cmd: string, args: string[], cwd: string): string {
   return execFileSync(cmd, args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] });
 }
@@ -14,8 +43,6 @@ function run(cmd: string, args: string[], cwd: string): string {
  * and compiles it into esm/ and cjs/.
  */
 export default function setup(): void {
-  const nestVersion = process.env.NEST_VERSION ?? '12';
-
   run('pnpm', ['build'], ROOT_DIR);
   rmSync(TMP_DIR, { recursive: true, force: true });
   mkdirSync(TMP_DIR, { recursive: true });
@@ -27,7 +54,7 @@ export default function setup(): void {
   const pkgPath = join(FIXTURE_DIR, 'package.json');
   const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
   for (const name of Object.keys(pkg.dependencies)) {
-    if (name.startsWith('@nestjs/')) pkg.dependencies[name] = nestVersion;
+    pkg.dependencies[name] = fixtureVersions(name) ?? pkg.dependencies[name];
   }
   pkg.dependencies['@oxth/nestjs-otel'] = `file:${relative(FIXTURE_DIR, join(TMP_DIR, tarball))}`;
   writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);

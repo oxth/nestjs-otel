@@ -55,6 +55,7 @@
     "build": "tsdown",
     "test": "vitest run",
     "test:e2e": "vitest run -c vitest.e2e.config.ts",
+    "test:db": "vitest run -c vitest.db.config.ts",
     "typecheck": "tsc --noEmit",
     "bench": "tsx bench/http-overhead.ts"
   },
@@ -135,6 +136,7 @@
     "rxjs": "^7.8.2",
     "sql.js": "^1.15.2",
     "supertest": "^7.3.1",
+    "testcontainers": "^12.2.1",
     "tsdown": "^0.23.3",
     "tsx": "^4.23.15",
     "typeorm": "^1.1.2",

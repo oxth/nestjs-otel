@@ -8,6 +8,8 @@ export interface RunningApp {
   stdout(): string;
   stderr(): string;
   get(path: string, init?: RequestInit): Promise<Response>;
+  /** POSTs `body` as JSON. */
+  post(path: string, body: unknown): Promise<Response>;
   stop(signal?: NodeJS.Signals): Promise<number | null>;
 }
 
@@ -118,6 +120,12 @@ export function spawnApp(o: {
         stdout: () => stdout,
         stderr: () => stderr,
         get: (path, init) => fetch(`http://127.0.0.1:${port}${path}`, init),
+        post: (path, body) =>
+          fetch(`http://127.0.0.1:${port}${path}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(body),
+          }),
         stop(signal = 'SIGTERM') {
           stopped ??= (() => {
             const kill = setTimeout(() => child.kill('SIGKILL'), STOP_TIMEOUT_MS);

@@ -3,20 +3,22 @@ import { type DynamicModule, type INestApplication, Module } from '@nestjs/commo
 import { NestFactory } from '@nestjs/core';
 import { OtelLogger } from '@oxth/nestjs-otel';
 import type { AddressInfo } from 'node:net';
-import { AppModule } from './app.module.js';
+import { AppModule, loadDbModule } from './app.module.js';
 
 @Module({})
 class RootModule {}
 
 /**
  * Starts the fixture app. `ADAPTER` = express | fastify. `LOGGER` = nest (OtelLogger) | pino (nestjs-pino);
- * unset keeps Nest's default logger. `PORT` defaults to 0 (any free port).
+ * unset keeps Nest's default logger. `PORT` defaults to 0 (any free port). `DB` / `DATABASE_URL`: see `loadDbModule`.
  */
 export async function bootstrap(): Promise<INestApplication> {
   const adapterName = process.env.ADAPTER ?? 'express';
   const loggerName = process.env.LOGGER;
 
   const imports: DynamicModule['imports'] = [AppModule];
+  const dbModule = await loadDbModule();
+  if (dbModule) imports.push(dbModule);
   if (loggerName === 'pino') {
     const { LoggerModule } = await import('nestjs-pino');
     imports.push(LoggerModule.forRoot());
