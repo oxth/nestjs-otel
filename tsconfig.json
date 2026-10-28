@@ -14,5 +14,6 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["src", "test", "*.config.ts"]
+  "include": ["src", "test", "*.config.ts"],
+  "exclude": ["test/e2e/fixture", "test/e2e/.tmp", "test/integration/.tmp"]
 }

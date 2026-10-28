@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": { "module": "ESNext", "moduleResolution": "Bundler", "outDir": "esm" },
+  "include": ["src"],
+  "exclude": ["src/entry-cjs.ts"]
+}

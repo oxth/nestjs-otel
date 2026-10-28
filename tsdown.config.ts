@@ -9,7 +9,13 @@ const external = [
 
 export default defineConfig({
   entry: ['src/index.ts', 'src/register.ts', 'src/pino.ts'],
-  format: ['esm', 'cjs'],
+  // `__OXTH_FORMAT__` lets format-specific code (the ESM loader hook, the CJS require.cache
+  // check) be dropped from the other build instead of relying on `import.meta` detection,
+  // which tsdown always shims in CJS output.
+  format: {
+    esm: { define: { __OXTH_FORMAT__: '"esm"' } },
+    cjs: { define: { __OXTH_FORMAT__: '"cjs"' } },
+  },
   dts: true,
   platform: 'node',
   target: 'node22',

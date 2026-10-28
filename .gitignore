@@ -6,3 +6,7 @@ test/e2e/.tmp
 *.tgz
 .DS_Store
 test/integration/.tmp
+test/e2e/fixture/node_modules
+test/e2e/fixture/esm
+test/e2e/fixture/cjs
+test/e2e/fixture/pnpm-lock.yaml
