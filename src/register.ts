@@ -1,5 +1,6 @@
 import { register as registerHooks } from 'node:module';
 import { readBootstrapConfig } from './bootstrap/config';
+import { installProcessErrorMonitor } from './bootstrap/process-errors';
 import { startSdk } from './bootstrap/sdk';
 import { getGlobalState } from './shared/global-state';
 import { safely } from './shared/safe';
@@ -30,6 +31,7 @@ safely(
       warnIfLoadedLate();
     }
     startSdk(readBootstrapConfig(process.env));
+    installProcessErrorMonitor();
   },
   undefined,
 );

@@ -6,6 +6,7 @@ export interface SdkHandle {
 export interface GlobalState {
   sdk?: SdkHandle;
   registered: boolean;
+  processMonitorInstalled?: boolean;
   warned: Set<string>;
 }
 
