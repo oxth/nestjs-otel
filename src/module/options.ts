@@ -1,0 +1,87 @@
+import type { ClassifyOptions } from '../errors/classify';
+import { createRedactor, type RedactOptions, type Redactor } from '../redact/redactor';
+import { DEFAULT_MAX_BODY_BYTES } from '../shared/constants';
+
+export interface OtelModuleOptions {
+  autoInstrument?: {
+    controllers?: boolean;
+    providers?: boolean;
+    guards?: boolean;
+    interceptors?: boolean;
+    pipes?: boolean;
+    /** Class names always wrapped, even in dynamic modules. */
+    include?: (string | RegExp)[];
+    /** Class names never wrapped. Wins over `include` and `@Trace()`. */
+    exclude?: (string | RegExp)[];
+  };
+  errors?: { treat4xxAsError?: boolean };
+  capture?: {
+    requestBody?: boolean;
+    responseBody?: boolean;
+    maxBodyBytes?: number;
+    getUserId?: (req: any) => string | number | undefined;
+  };
+  redact?: RedactOptions;
+}
+
+export interface ResolvedOtelOptions {
+  autoInstrument: {
+    controllers: boolean;
+    providers: boolean;
+    guards: boolean;
+    interceptors: boolean;
+    pipes: boolean;
+    include: (string | RegExp)[];
+    exclude: (string | RegExp)[];
+  };
+  errors: { treat4xxAsError: boolean };
+  capture: {
+    requestBody: boolean;
+    responseBody: boolean;
+    maxBodyBytes: number;
+    getUserId: (req: any) => string | number | undefined;
+  };
+  redact: RedactOptions;
+  redactor: Redactor;
+  classify: ClassifyOptions;
+}
+
+export interface OtelModuleAsyncOptions {
+  imports?: any[];
+  inject?: any[];
+  useFactory: (...a: any[]) => OtelModuleOptions | Promise<OtelModuleOptions>;
+}
+
+export const OTEL_OPTIONS = Symbol.for('@oxth/nestjs-otel.options');
+/** Resolves to the `instrumentApplication` report once providers have been patched. */
+export const OTEL_INSTRUMENTED = Symbol.for('@oxth/nestjs-otel.instrumented');
+
+const defaultGetUserId = (req: any): string | number | undefined => req?.user?.id;
+
+export function resolveOptions(o: OtelModuleOptions = {}): ResolvedOtelOptions {
+  const a = o.autoInstrument ?? {};
+  const c = o.capture ?? {};
+  const treat4xxAsError = o.errors?.treat4xxAsError ?? false;
+  const redact = o.redact ?? {};
+  return {
+    autoInstrument: {
+      controllers: a.controllers ?? true,
+      providers: a.providers ?? true,
+      guards: a.guards ?? false,
+      interceptors: a.interceptors ?? false,
+      pipes: a.pipes ?? false,
+      include: a.include ?? [],
+      exclude: a.exclude ?? [],
+    },
+    errors: { treat4xxAsError },
+    capture: {
+      requestBody: c.requestBody ?? true,
+      responseBody: c.responseBody ?? false,
+      maxBodyBytes: c.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES,
+      getUserId: c.getUserId ?? defaultGetUserId,
+    },
+    redact,
+    redactor: createRedactor(redact),
+    classify: { treat4xxAsError },
+  };
+}
