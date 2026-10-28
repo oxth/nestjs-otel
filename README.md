@@ -298,8 +298,11 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
   unless `autoInstrument.filters: true`.
 - **Guards**: an error thrown in a guard is recorded on the server span (with the request body and user id), but
   there is no `http.response.body` for it.
-- **Shutdown**: on SIGTERM/SIGINT the SDK is flushed and shut down. With no reachable collector this waits up to
-  5 s for the export to time out.
+- **Shutdown**: on SIGTERM/SIGINT, if nothing else listens for the signal, the SDK is flushed and shut down, then the
+  signal is re-raised. With no reachable collector this waits up to 5 s for the export to time out. If something
+  else listens (e.g. `app.enableShutdownHooks()`), the library leaves shutdown to it: `OtelModule` shuts the SDK
+  down after Nest's shutdown hooks, so telemetry from in-flight requests and the hooks is still exported. If your
+  own signal handler calls `process.exit()` without closing the Nest app, nothing is flushed.
 - **Uncaught exceptions**: if no other `uncaughtException` listener exists, the library flushes telemetry for up to
   2 s, prints the error and exits with code 1, like Node's default but with the FATAL log delivered.
 - **One Nest app per process** is the supported setup; options are process-global.

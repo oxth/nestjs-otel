@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'tsdown';
 import { beforeAll, describe, expect, it } from 'vitest';
+import { startOtlpReceiver } from '../e2e/helpers/otlp-receiver';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, '.tmp/bootstrap');
@@ -91,6 +92,34 @@ describe('sdk lifecycle', () => {
     expect(r.signal).toBe('SIGTERM');
     expect(r.elapsedAfterSignal).toBeLessThan(6000);
   }, 10000);
+
+  it.each([
+    ['with OtelModule', '1'],
+    ['register only', '0'],
+  ])('telemetry from nest shutdown hooks is exported (%s)', async (_, withModule) => {
+    const receiver = await startOtlpReceiver();
+    try {
+      const r = await run(
+        'nest-shutdown-telemetry.mjs',
+        {
+          WITH_MODULE: withModule,
+          OTEL_EXPORTER_OTLP_ENDPOINT: receiver.url,
+          OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+          OTEL_METRICS_EXPORTER: 'none',
+          OTEL_BSP_SCHEDULE_DELAY: '5000',
+          OTEL_BLRP_SCHEDULE_DELAY: '5000',
+        },
+        { killOn: 'ready' },
+      );
+      expect(r.stdout.match(/hook/g)).toHaveLength(1);
+      expect(r.signal).toBe('SIGTERM');
+      expect(r.elapsedAfterSignal).toBeLessThan(6000);
+      expect(receiver.spans().map((s) => s.name)).toContain('shutdown-hook-span');
+      expect(receiver.logs().map((l) => l.body)).toContain('shutdown-hook-log');
+    } finally {
+      await receiver.close();
+    }
+  }, 15000);
 
   it('does not re-raise the signal when the app listens for it', async () => {
     const r = await run('own-listener.mjs', noExport, { killOn: 'ready' });

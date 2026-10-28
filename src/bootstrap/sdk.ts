@@ -98,16 +98,23 @@ function withTimeout(promise: Promise<void>, ms: number): Promise<void> {
 
 function installShutdown(handle: SdkHandle): void {
   for (const signal of SIGNALS) {
-    process.once(signal, () => {
+    const onSignal = (): void => {
+      // Someone else (e.g. Nest's enableShutdownHooks) owns shutdown: don't cut the SDK off while
+      // the app is still draining. OtelModule.onApplicationShutdown shuts it down after Nest's
+      // hooks; staying armed also covers apps without OtelModule when Nest re-raises the signal.
+      if (process.listenerCount(signal) > 0) {
+        process.once(signal, onSignal);
+        return;
+      }
       void withTimeout(
         Promise.resolve().then(() => handle.shutdown()),
         SHUTDOWN_TIMEOUT_MS,
       ).then(() => {
-        // Someone else (e.g. Nest's enableShutdownHooks) owns process exit.
         if (process.listenerCount(signal) > 0) return;
         process.kill(process.pid, signal);
       });
-    });
+    };
+    process.once(signal, onSignal);
   }
 }
 
