@@ -5,9 +5,12 @@ import { dirname, join } from 'node:path';
  * Packages a Nest app usually reaches only through its platform adapter. With pnpm's isolated
  * layout `express`/`fastify` are not resolvable from the app root, only from the adapter.
  */
-export const ADAPTER_PACKAGES: Readonly<Record<string, string>> = {
-  express: '@nestjs/platform-express',
-  fastify: '@nestjs/platform-fastify',
+export const ADAPTER_PACKAGES: Readonly<Record<string, readonly string[]>> = {
+  express: ['@nestjs/platform-express'],
+  fastify: ['@nestjs/platform-fastify'],
+  pg: ['@mikro-orm/postgresql'],
+  mysql2: ['@mikro-orm/mysql', '@mikro-orm/mariadb'],
+  mongodb: ['@mikro-orm/mongodb'],
 };
 
 /** Where the app's dependencies are looked up: the working directory and the entry script's directory. */
@@ -33,15 +36,16 @@ function resolveFrom(fromFile: string, pkg: string): string | undefined {
 export function isInstalled(
   pkg: string,
   fromDirs: string[] = defaultBaseDirs(),
-  adapters: Readonly<Record<string, string>> = ADAPTER_PACKAGES,
+  adapters: Readonly<Record<string, readonly string[]>> = ADAPTER_PACKAGES,
 ): boolean {
-  const adapter = adapters[pkg];
+  const adapterPkgs = adapters[pkg] ?? [];
   for (const dir of fromDirs) {
     const from = join(dir, 'noop.js');
     if (resolveFrom(from, pkg) !== undefined) return true;
-    if (adapter === undefined) continue;
-    const adapterEntry = resolveFrom(from, adapter);
-    if (adapterEntry !== undefined && resolveFrom(adapterEntry, pkg) !== undefined) return true;
+    for (const adapter of adapterPkgs) {
+      const adapterEntry = resolveFrom(from, adapter);
+      if (adapterEntry !== undefined && resolveFrom(adapterEntry, pkg) !== undefined) return true;
+    }
   }
   return false;
 }

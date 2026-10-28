@@ -3,9 +3,15 @@ import { FastifyOtelInstrumentation } from '@fastify/otel';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
+import { MySQL2Instrumentation } from '@opentelemetry/instrumentation-mysql2';
+import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
+import { MikroOrmInstrumentation } from '../orm/mikro-orm';
+import { TypeormInstrumentation } from '../orm/typeorm';
 import { DEFAULT_QUERY_PARAMS } from '../redact/defaults';
+import { maskSqlLiterals } from '../redact/sql-mask';
 import { safely } from '../shared/safe';
 import { ROOT_SPAN } from '../shared/symbols';
 import type { BootstrapConfig, InstrumentationName } from './config';
@@ -47,6 +53,30 @@ export const INSTRUMENTATIONS: InstrumentationEntry[] = [
   },
   { name: 'pino', pkg: 'pino', create: () => new PinoInstrumentation() },
   { name: 'runtime-node', pkg: null, create: () => new RuntimeNodeInstrumentation() },
+  {
+    name: 'pg',
+    pkg: 'pg',
+    create: () =>
+      new PgInstrumentation({
+        enhancedDatabaseReporting: false,
+        requestHook(span, info) {
+          safely(
+            'pg requestHook',
+            () => {
+              const masked = maskSqlLiterals(info.query.text, { doubleQuotedStrings: false });
+              span.setAttribute('db.query.text', masked);
+              const attrs = (span as unknown as { attributes?: Record<string, unknown> }).attributes;
+              if (attrs && attrs['db.statement'] !== undefined) span.setAttribute('db.statement', masked);
+            },
+            undefined,
+          );
+        },
+      }),
+  },
+  { name: 'mysql2', pkg: 'mysql2', create: () => new MySQL2Instrumentation({ maskStatement: true }) },
+  { name: 'mongodb', pkg: 'mongodb', create: () => new MongoDBInstrumentation({ enhancedDatabaseReporting: false }) },
+  { name: 'typeorm', pkg: 'typeorm', create: () => new TypeormInstrumentation() },
+  { name: 'mikro-orm', pkg: '@mikro-orm/core', create: () => new MikroOrmInstrumentation() },
 ];
 
 export function buildInstrumentations(

@@ -25,6 +25,53 @@ describe('buildInstrumentations', () => {
     const cfg = readBootstrapConfig({ OTEL_NODE_ENABLED_INSTRUMENTATIONS: 'express' });
     expect(names(cfg, ['express', 'pino'])).toEqual(['@opentelemetry/instrumentation-express']);
   });
+
+  it('db entries included only when installed', () => {
+    const n = (inst: string[]) => names(readBootstrapConfig({}), inst);
+    expect(n(['pg', 'typeorm'])).toEqual(
+      expect.arrayContaining(['@opentelemetry/instrumentation-pg', '@oxth/nestjs-otel/instrumentation-typeorm']),
+    );
+    expect(n([])).not.toContain('@opentelemetry/instrumentation-mysql2');
+  });
+
+  it('db entries can be disabled by name', () => {
+    const cfg = readBootstrapConfig({ OTEL_NODE_DISABLED_INSTRUMENTATIONS: 'pg,mikro-orm' });
+    const all = ['pg', 'mysql2', 'mongodb', 'typeorm', '@mikro-orm/core'];
+    const result = names(cfg, all);
+    expect(result).not.toContain('@opentelemetry/instrumentation-pg');
+    expect(result).toContain('@opentelemetry/instrumentation-mysql2');
+    expect(result.some((x) => x.includes('mikro'))).toBe(false);
+  });
+
+  const find = (name: string, pkgs: string[]) =>
+    buildInstrumentations(readBootstrapConfig({}), (p) => pkgs.includes(p)).find((i) => i.instrumentationName === name)!;
+
+  it('mysql2 masks statements by default', () => {
+    const inst = find('@opentelemetry/instrumentation-mysql2', ['mysql2']);
+    expect((inst.getConfig() as { maskStatement?: boolean }).maskStatement).toBe(true);
+  });
+
+  it('mongodb does not report enhanced database values', () => {
+    const inst = find('@opentelemetry/instrumentation-mongodb', ['mongodb']);
+    expect((inst.getConfig() as { enhancedDatabaseReporting?: boolean }).enhancedDatabaseReporting).toBe(false);
+  });
+
+  it('pg requestHook masks literals', () => {
+    const inst = find('@opentelemetry/instrumentation-pg', ['pg']);
+    const cfg = inst.getConfig() as {
+      enhancedDatabaseReporting?: boolean;
+      requestHook: (span: unknown, info: unknown) => void;
+    };
+    expect(cfg.enhancedDatabaseReporting).toBe(false);
+    const calls: Array<[string, unknown]> = [];
+    const span = { attributes: { 'db.statement': 'x' }, setAttribute: (k: string, v: unknown) => void calls.push([k, v]) };
+    cfg.requestHook(span, { query: { text: "SELECT * FROM u WHERE pw = 'hunter2' AND \"c\" = $1" } });
+    expect(calls).toEqual([
+      ['db.query.text', 'SELECT * FROM u WHERE pw = ? AND "c" = $1'],
+      ['db.statement', 'SELECT * FROM u WHERE pw = ? AND "c" = $1'],
+    ]);
+    expect(() => cfg.requestHook({ setAttribute() { throw new Error('boom'); } }, { query: { text: 'x' } })).not.toThrow();
+  });
 });
 
 describe('isInstalled', () => {
@@ -45,7 +92,7 @@ describe('isInstalled', () => {
   symlinkSync(join(store, '@oxth-fake/platform'), join(app, 'node_modules/@oxth-fake/platform'), 'dir');
   writePkg(join(bin, 'node_modules/oxth-fake-cli-only'), 'oxth-fake-cli-only');
   afterAll(() => rmSync(root, { recursive: true, force: true }));
-  const adapters = { 'oxth-fake-http': '@oxth-fake/platform' };
+  const adapters = { 'oxth-fake-http': ['@oxth-fake/platform'] };
 
   it('resolves packages from the given directories', () => {
     expect(isInstalled('vitest')).toBe(true);
@@ -57,6 +104,24 @@ describe('isInstalled', () => {
   it('resolves an adapter dependency through the Nest adapter package (pnpm layout)', () => {
     expect(isInstalled('oxth-fake-http', [app], {})).toBe(false);
     expect(isInstalled('oxth-fake-http', [app], adapters)).toBe(true);
+  });
+
+  it('tries each adapter in order (pg via @mikro-orm/postgresql)', () => {
+    const r = mkdtempSync(join(tmpdir(), 'oxth-detect-pg-'));
+    try {
+      const mk = (dir: string, name: string) => {
+        mkdirSync(dir, { recursive: true });
+        writeFileSync(join(dir, 'package.json'), JSON.stringify({ name, main: 'index.js' }));
+        writeFileSync(join(dir, 'index.js'), '');
+      };
+      const adapter = join(r, 'node_modules/@mikro-orm/postgresql');
+      mk(adapter, '@mikro-orm/postgresql');
+      mk(join(adapter, 'node_modules/pg'), 'pg');
+      expect(isInstalled('pg', [r], { pg: ['@mikro-orm/mysql', '@mikro-orm/postgresql'] })).toBe(true);
+      expect(isInstalled('pg', [r], {})).toBe(false);
+    } finally {
+      rmSync(r, { recursive: true, force: true });
+    }
   });
 
   it('looks next to the entry script by default', () => {
