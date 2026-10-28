@@ -11,9 +11,6 @@ importers:
       '@fastify/otel':
         specifier: ^0.21.4
         version: 0.21.4(@opentelemetry/api@1.10.0)
-      '@opentelemetry/api-logs':
-        specifier: ^0.223.0
-        version: 0.223.0
       '@opentelemetry/core':
         specifier: ^3.0.0
         version: 3.0.0(@opentelemetry/api@1.10.0)
