@@ -1,0 +1,7 @@
+node_modules
+dist
+coverage
+test/e2e/.tmp
+.superpowers/
+*.tgz
+.DS_Store
