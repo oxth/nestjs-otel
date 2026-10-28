@@ -39,4 +39,19 @@ describe('maskSqlLiterals hardening', () => {
     expect(maskSqlLiterals('x = $$abc', pg)).toBe('x = ?');
     expect(maskSqlLiterals('x = /* abc')).toBe('x = /* abc');
   });
+  it('pg: nested block comments', () =>
+    expect(maskSqlLiterals("/* /* nested */ don't */ x = 'secret'", pg)).toBe("/* /* nested */ don't */ x = ?"));
+  it('mysql: # comments skipped', () =>
+    expect(maskSqlLiterals("SELECT 1 # don't\nWHERE x = 'secret'")).toBe("SELECT ? # don't\nWHERE x = ?"));
+  it('pg: # is not a comment', () => expect(maskSqlLiterals("a #> 'k' ", pg)).toBe('a #> ? '));
+  it('pg: E prefix at start of input', () => expect(maskSqlLiterals("E'a\\'b'", pg)).toBe('?'));
+  it('runs in linear time on 1 MB input in pg mode', () => {
+    for (const unit of ["'a',", "SELECT * FROM t WHERE x = 1 AND y = 'abc' "]) {
+      const input = unit.repeat(Math.ceil(1_000_000 / unit.length));
+      const start = performance.now();
+      const res = maskSqlLiterals(input, pg);
+      expect(performance.now() - start).toBeLessThan(500);
+      expect(res).not.toContain('abc');
+    }
+  });
 });

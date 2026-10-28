@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { readBootstrapConfig, type BootstrapConfig } from '../../src/bootstrap/config';
 import { buildInstrumentations } from '../../src/bootstrap/instrumentations';
-import { isInstalled } from '../../src/bootstrap/detect';
+import { ADAPTER_PACKAGES, isInstalled } from '../../src/bootstrap/detect';
 
 describe('buildInstrumentations', () => {
   const names = (cfg: BootstrapConfig, inst: string[]) =>
@@ -45,6 +45,16 @@ describe('buildInstrumentations', () => {
 
   const find = (name: string, pkgs: string[]) =>
     buildInstrumentations(readBootstrapConfig({}), (p) => pkgs.includes(p)).find((i) => i.instrumentationName === name)!;
+
+  it('mikro-orm entry enabled when @mikro-orm/core installed', () => {
+    expect(names(readBootstrapConfig({}), ['@mikro-orm/core'])).toContain('@oxth/nestjs-otel/instrumentation-mikro-orm');
+  });
+
+  it('declares the MikroORM driver adapters', () => {
+    expect(ADAPTER_PACKAGES.pg).toEqual(['@mikro-orm/postgresql']);
+    expect(ADAPTER_PACKAGES.mysql2).toEqual(['@mikro-orm/mysql', '@mikro-orm/mariadb']);
+    expect(ADAPTER_PACKAGES.mongodb).toEqual(['@mikro-orm/mongodb']);
+  });
 
   it('mysql2 masks statements by default', () => {
     const inst = find('@opentelemetry/instrumentation-mysql2', ['mysql2']);
