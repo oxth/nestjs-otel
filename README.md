@@ -183,6 +183,97 @@ import { otelPinoMixin } from '@oxth/nestjs-otel/pino';
 const logger = pino({ mixin: otelPinoMixin() });
 ```
 
+## Databases
+
+With the driver packages installed, `register` instruments them automatically, and TypeORM and MikroORM calls get an
+ORM-level span on top.
+
+Supported: TypeORM `>=0.3 <2`, MikroORM `>=6 <8`; drivers `pg`, `mysql2` and `mongodb`. Each instrumentation is only
+enabled when its package (`pg`, `mysql2`, `mongodb`, `typeorm`, `@mikro-orm/core`) is installed.
+
+### What a trace looks like
+
+```
+GET /users/1
+└─ UsersService.findOne
+   └─ TypeORM find User            (ORM span)
+      └─ pg.query:SELECT           (driver span)
+```
+
+The driver span sits beneath the ORM span. Other examples: `TypeORM save User`, `MikroORM flush`.
+
+ORM span names are `<TypeORM|MikroORM> <operation>[ <Entity>]`. Attributes:
+
+| Attribute | Value |
+| --- | --- |
+| `db.orm.name` | `typeorm` or `mikro-orm` |
+| `db.operation.name` | The ORM method, e.g. `find`, `save`, `flush`, `getMany`. |
+| `db.orm.entity` | Entity class name, when known. |
+| `db.collection.name` | Table or collection name, when known. |
+| `db.system.name` | `postgresql`, `mysql`, `mariadb`, `mongodb`, `sqlite`, ... when the driver type is known. |
+| `db.orm.params` | Captured parameters (redacted JSON), see below. |
+| `db.orm.params.truncated` | `true` when `db.orm.params` was cut at `db.maxParamsBytes`. |
+
+Driver spans carry the upstream instrumentations' own attributes.
+
+TypeORM: entity manager and repository methods, the select query builder (`getMany`, `getOne`, `getRawMany`,
+`getCount`, ...) and `execute` of insert/update/delete query builders; `QueryRunner` is not wrapped (raw
+`queryRunner.query` calls still get driver spans). MikroORM: entity manager methods, `flush`, and query builders.
+
+Nested calls collapse into one span: a `find` that internally calls other ORM methods produces a single ORM span,
+with the driver span(s) under it. Containers are the exception, so a transaction shows its inner calls:
+TypeORM `manager.transaction(cb)` and MikroORM `em.transactional(cb)`. After an `em.transactional(cb)` callback you
+will see a final `MikroORM flush` child: that is MikroORM committing the work done in the callback.
+
+### Parameters and masking
+
+`db.captureParams` decides when `db.orm.params` is recorded: `'error'` (default, only when the call fails),
+`'always'` or `'never'`. `db.maxParamsBytes` (default `2048`) caps the serialized size; longer values are truncated
+and `db.orm.params.truncated` is set. Parameters go through the same redactor as bodies (see
+[Errors and redaction](#errors-and-redaction)).
+
+```ts
+OtelModule.forRoot({ db: { captureParams: 'error', maxParamsBytes: 2048 } });
+```
+
+- **Query builder failures** capture `{ values, parameters }`. TypeORM's generated `orm_param_N` and MikroORM's
+  positional values are always `[REDACTED]`; keyed fields (e.g. `password`) go through the redactor.
+- **Raw positional parameters** (`manager.query(sql, [..])`, `em.execute(sql, [..])`) are captured on failure with
+  their values intact; only JWT/Bearer patterns are masked. Avoid passing secrets that way, or set
+  `db.captureParams: 'never'`.
+- **Driver spans**: `pg` and `mysql2` query text has literals replaced with `?` (so `LIMIT 10` shows `LIMIT ?`).
+  MongoDB values are masked by the instrumentation.
+- **MikroORM 6** puts the interpolated SQL into its error messages. The library masks that statement in the span
+  status, exception events and `OtelLogger` records. This is best effort: the last 64 failing statements are
+  tracked. Pino log lines are not masked, and database-native error details (e.g. MySQL
+  `Duplicate entry 'x' for key ...`, a pg error detail) may contain values.
+
+### Errors
+
+A failed DB call shows two exception events: one on the driver span (recorded by the upstream instrumentation) and
+one on the ORM span. Parent spans only get the error status.
+
+### Metrics
+
+Whatever the driver instrumentations emit: `pg` exports `db.client.operation.duration` and connection metrics,
+`mongodb` the connection count, `mysql2` none.
+
+### Not traced
+
+Streaming APIs (TypeORM `stream()`, MikroORM `stream` and cursors) are not traced.
+
+### Disabling
+
+Turn off by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS` (e.g. `pg,mysql2,mongodb,typeorm,mikro-orm`), or
+allow-list with `OTEL_NODE_ENABLED_INSTRUMENTATIONS`.
+
+### Testing (contributors)
+
+`pnpm test:db` runs the database suite against real database containers (testcontainers), so it needs Docker.
+Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure (CI sets it). Select versions with
+`NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`) and `MIKRO_VERSION` (default `^7`), e.g.
+`NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 pnpm test:db`.
+
 ## Decorators, `TraceService` and `MetricService`
 
 ```ts
@@ -251,6 +342,8 @@ export class OrdersService {
 | `redact.replaceDefaultPatterns` | `false` | Drop the default value patterns. |
 | `redact.censor` | `'[REDACTED]'` | Replacement text. |
 | `redact.custom` | none | `(value, path) => value`, runs on every value. |
+| `db.captureParams` | `'error'` | When to record ORM query parameters: `'error'`, `'always'` or `'never'`. |
+| `db.maxParamsBytes` | `2048` | Captured parameters larger than this are truncated. |
 
 ## Environment variables
 
@@ -270,7 +363,7 @@ Handled by this library:
 | Variable | Purpose |
 | --- | --- |
 | `OTEL_SDK_DISABLED=true` | Do not start the SDK. `OtelModule` stays harmless. |
-| `OTEL_NODE_ENABLED_INSTRUMENTATIONS` | Comma list; only these of `http`, `express`, `fastify`, `pino`, `runtime-node`. |
+| `OTEL_NODE_ENABLED_INSTRUMENTATIONS` | Comma list; only these of `http`, `express`, `fastify`, `pino`, `runtime-node`, `pg`, `mysql2`, `mongodb`, `typeorm`, `mikro-orm`. |
 | `OTEL_NODE_DISABLED_INSTRUMENTATIONS` | Comma list of the same names to turn off. |
 
 `service.version` is read from `package.json` and `deployment.environment.name` from `NODE_ENV`, unless set in
@@ -314,10 +407,9 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
 
 ## Roadmap
 
-This is Plan 1 (core). Planned next:
+Plan 1 (core) and Plan 2 (database tracing for TypeORM and MikroORM, with pg, mysql2 and mongodb) are done. Planned next:
 
-- **Plan 2**: microservice handler spans, redaction of DB parameters, job data and message payloads.
-- **Plan 3**: BullMQ, database and microservice metrics.
+- **Plan 3**: microservice handler spans, BullMQ, job data and message payloads, microservice metrics.
 - **Plan 4**: integrations beyond HTTP and pino, and opt-in request header capture (using `redactHeaders`).
 
 ## License

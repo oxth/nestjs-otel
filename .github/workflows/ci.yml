@@ -31,6 +31,33 @@ jobs:
         env:
           NEST_VERSION: ${{ matrix.nest }}
 
+  db:
+    name: db (nest ${{ matrix.nest }}, typeorm ${{ matrix.typeorm }}, mikro ${{ matrix.mikro }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { nest: 12, typeorm: '^1', mikro: '^7' }
+          - { nest: 11, typeorm: '^0.3', mikro: '^6' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build
+      - run: pnpm test:db
+        env:
+          REQUIRE_DOCKER: '1'
+          NEST_VERSION: ${{ matrix.nest }}
+          TYPEORM_VERSION: ${{ matrix.typeorm }}
+          MIKRO_VERSION: ${{ matrix.mikro }}
+
   bench:
     name: overhead benchmark
     runs-on: ubuntu-latest

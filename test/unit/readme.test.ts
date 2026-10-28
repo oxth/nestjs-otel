@@ -27,3 +27,9 @@ it('README documents every OtelModuleOptions default', () => {
   ])
     expect(readme).toContain(`\`${key}\``);
 });
+
+it('README documents db options', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  for (const key of ['db.captureParams', 'db.maxParamsBytes']) expect(readme).toContain(`\`${key}\``);
+  expect(readme).toMatch(/## Databases/);
+});
