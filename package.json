@@ -59,6 +59,7 @@
     "bench": "tsx bench/http-overhead.ts"
   },
   "peerDependencies": {
+    "@mikro-orm/core": ">=6.0.0 <8",
     "@nestjs/common": "^11.0.0 || ^12.0.0",
     "@nestjs/core": "^11.0.0 || ^12.0.0",
     "@nestjs/microservices": "^11.0.0 || ^12.0.0",
@@ -89,6 +90,9 @@
     },
     "typeorm": {
       "optional": true
+    },
+    "@mikro-orm/core": {
+      "optional": true
     }
   },
   "dependencies": {
@@ -104,6 +108,9 @@
     "@opentelemetry/semantic-conventions": "^1.43.0"
   },
   "devDependencies": {
+    "@mikro-orm/core": "^7.2.5",
+    "@mikro-orm/sql": "^7.2.5",
+    "@mikro-orm/sqlite": "^7.2.5",
     "@nestjs/common": "^12.3.2",
     "@nestjs/core": "^12.3.2",
     "@nestjs/microservices": "^12.3.2",
@@ -130,5 +137,10 @@
     "typeorm": "^1.1.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3"
+    ]
   }
 }
