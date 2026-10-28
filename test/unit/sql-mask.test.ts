@@ -55,3 +55,11 @@ describe('maskSqlLiterals hardening', () => {
     }
   });
 });
+
+describe('maskSqlLiterals backtick identifiers (MySQL mode)', () => {
+  it('skips a backtick identifier containing a quote', () =>
+    expect(maskSqlLiterals("select `it's` from t where pw = 'hunter2'")).toBe('select `it\'s` from t where pw = ?'));
+  it('honours the doubled-backtick escape', () =>
+    expect(maskSqlLiterals("select `a``'b` from t where pw = 'hunter2'")).toBe("select `a``'b` from t where pw = ?"));
+  it('keeps digits inside backticks', () => expect(maskSqlLiterals('select `1` from t')).toBe('select `1` from t'));
+});

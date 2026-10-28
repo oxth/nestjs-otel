@@ -61,6 +61,14 @@ describe('buildInstrumentations', () => {
     expect((inst.getConfig() as { maskStatement?: boolean }).maskStatement).toBe(true);
   });
 
+  it('mysql2 masks with maskSqlLiterals (backticks, multi-line strings)', () => {
+    const inst = find('@opentelemetry/instrumentation-mysql2', ['mysql2']);
+    const hook = (inst.getConfig() as { maskStatementHook?: (q: string) => string }).maskStatementHook!;
+    expect(hook("select `it's` from t where pw = 'hunter2'")).toBe("select `it's` from t where pw = ?");
+    expect(hook("insert into t values ('line1\nline2\nhunter2', 3)")).toBe('insert into t values (?, ?)');
+    expect(hook(undefined as unknown as string)).toBe('?');
+  });
+
   it('mongodb does not report enhanced database values', () => {
     const inst = find('@opentelemetry/instrumentation-mongodb', ['mongodb']);
     expect((inst.getConfig() as { enhancedDatabaseReporting?: boolean }).enhancedDatabaseReporting).toBe(false);
@@ -74,12 +82,9 @@ describe('buildInstrumentations', () => {
     };
     expect(cfg.enhancedDatabaseReporting).toBe(false);
     const calls: Array<[string, unknown]> = [];
-    const span = { attributes: { 'db.statement': 'x' }, setAttribute: (k: string, v: unknown) => void calls.push([k, v]) };
+    const span = { setAttribute: (k: string, v: unknown) => void calls.push([k, v]) };
     cfg.requestHook(span, { query: { text: "SELECT * FROM u WHERE pw = 'hunter2' AND \"c\" = $1" } });
-    expect(calls).toEqual([
-      ['db.query.text', 'SELECT * FROM u WHERE pw = ? AND "c" = $1'],
-      ['db.statement', 'SELECT * FROM u WHERE pw = ? AND "c" = $1'],
-    ]);
+    expect(calls).toEqual([['db.query.text', 'SELECT * FROM u WHERE pw = ? AND "c" = $1']]);
     expect(() => cfg.requestHook({ setAttribute() { throw new Error('boom'); } }, { query: { text: 'x' } })).not.toThrow();
   });
 });

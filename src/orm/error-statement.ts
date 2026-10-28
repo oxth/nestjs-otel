@@ -13,7 +13,9 @@ const STATEMENT = /^\s*(?:select|insert|update|delete|with|replace|merge|upsert|
 export function maskStatementInError(err: unknown, system: string | undefined): void {
   const message = (err as { message?: unknown } | null | undefined)?.message;
   if (typeof message !== 'string') return;
-  const cut = message.indexOf(SEPARATOR);
+  // The last separator: values (`'John - Smith'`) and arithmetic (`a - 1`) may contain it too. A driver
+  // message containing it only means a little of that message is masked as well.
+  const cut = message.lastIndexOf(SEPARATOR);
   if (cut <= 0) return;
   const statement = message.slice(0, cut);
   if (!STATEMENT.test(statement)) return;

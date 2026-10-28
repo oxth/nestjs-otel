@@ -63,17 +63,23 @@ export const INSTRUMENTATIONS: InstrumentationEntry[] = [
           safely(
             'pg requestHook',
             () => {
-              const masked = maskSqlLiterals(info.query.text, { doubleQuotedStrings: false });
-              span.setAttribute('db.query.text', masked);
-              const attrs = (span as unknown as { attributes?: Record<string, unknown> }).attributes;
-              if (attrs && attrs['db.statement'] !== undefined) span.setAttribute('db.statement', masked);
+              span.setAttribute('db.query.text', maskSqlLiterals(info.query.text, { doubleQuotedStrings: false }));
             },
             undefined,
           );
         },
       }),
   },
-  { name: 'mysql2', pkg: 'mysql2', create: () => new MySQL2Instrumentation({ maskStatement: true }) },
+  {
+    name: 'mysql2',
+    pkg: 'mysql2',
+    create: () =>
+      new MySQL2Instrumentation({
+        maskStatement: true,
+        // Same masking as the ORM layer (backtick identifiers, comments, multi-line strings); `?` if it fails.
+        maskStatementHook: (query) => safely('mysql2 maskStatementHook', () => maskSqlLiterals(query), '?'),
+      }),
+  },
   { name: 'mongodb', pkg: 'mongodb', create: () => new MongoDBInstrumentation({ enhancedDatabaseReporting: false }) },
   { name: 'typeorm', pkg: 'typeorm', create: () => new TypeormInstrumentation() },
   { name: 'mikro-orm', pkg: '@mikro-orm/core', create: () => new MikroOrmInstrumentation() },

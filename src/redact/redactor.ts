@@ -163,26 +163,35 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
 }
 
 const MAX_MASKED_TEXTS = 64;
+/** Budget for all registered texts, counted as raw + masked string lengths. */
+const MAX_MASKED_TEXT_SIZE = 2 * 1024 * 1024;
 
 /**
  * Registers `raw` to be replaced by `masked` in every `redactString` result (error messages and stacks
  * on spans, log bodies), for values only known at runtime, such as a failed statement with its parameters
- * interpolated into a driver's error message. The most recent 64 are kept.
+ * interpolated into a driver's error message. The most recent 64 are kept, within a 2 MB total; the
+ * oldest are evicted first, and the newest is always kept, even if it alone is larger.
  */
 export function registerMaskedText(raw: string, masked: string): void {
   if (raw === '' || raw === masked) return;
   const state = getGlobalState();
   const texts = (state.maskedTexts ??= new Map());
   texts.delete(raw);
-  if (texts.size >= MAX_MASKED_TEXTS) texts.delete(texts.keys().next().value!);
   texts.set(raw, masked);
+  let size = 0;
+  for (const [r, m] of texts) size += r.length + m.length;
+  for (const [r, m] of texts) {
+    if (texts.size <= 1 || (texts.size <= MAX_MASKED_TEXTS && size <= MAX_MASKED_TEXT_SIZE)) break;
+    texts.delete(r);
+    size -= r.length + m.length;
+  }
 }
 
 function applyMaskedTexts(value: string): string {
   const texts = getGlobalState().maskedTexts;
   if (!texts?.size) return value;
   let out = value;
-  for (const [raw, masked] of texts) if (out.includes(raw)) out = out.replaceAll(raw, masked);
+  for (const [raw, masked] of texts) if (out.includes(raw)) out = out.replaceAll(raw, () => masked);
   return out;
 }
 

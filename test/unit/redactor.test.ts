@@ -1,6 +1,7 @@
 import type { RedactOptions } from '../../src/index';
 import { describe, it, expect } from 'vitest';
 import { createRedactor, registerMaskedText, serializeBody } from '../../src/redact/redactor';
+import { getGlobalState } from '../../src/shared/global-state';
 
 const r = createRedactor();
 
@@ -117,5 +118,41 @@ describe('registerMaskedText', () => {
     for (let i = 1; i <= 64; i++) registerMaskedText(`<${i}>`, '?');
     expect(r.redactString('values (1, secret-0)')).toBe('values (1, secret-0)'); // the first entry was evicted
     expect(r.redactString('<64> <1>')).toBe('? ?');
+  });
+});
+
+describe('registerMaskedText byte budget', () => {
+  const MB = 1024 * 1024;
+  const total = () => {
+    let n = 0;
+    for (const [raw, masked] of getGlobalState().maskedTexts ?? []) n += raw.length + masked.length;
+    return n;
+  };
+
+  it('keeps the total size within 2 MB, evicting the oldest first', () => {
+    getGlobalState().maskedTexts = undefined;
+    const statements = [0, 1, 2].map((i) => `select ${i} ${'x'.repeat(MB)} '${'s' + i}'`);
+    for (const s of statements) registerMaskedText(s, 'select ?');
+    expect(total()).toBeLessThanOrEqual(2 * MB);
+    expect([...getGlobalState().maskedTexts!.keys()]).toEqual([statements[2]]);
+    expect(createRedactor().redactString(`[${statements[2]}]`)).toBe('[select ?]');
+  });
+
+  it('always keeps the newest entry even if it alone exceeds the budget', () => {
+    getGlobalState().maskedTexts = undefined;
+    registerMaskedText('small', '?');
+    const big = 'y'.repeat(3 * MB);
+    registerMaskedText(big, '?');
+    expect([...getGlobalState().maskedTexts!.keys()]).toEqual([big]);
+    expect(createRedactor().redactString(big)).toBe('?');
+  });
+
+  it('inserts the masked text literally ($ patterns are not expanded)', () => {
+    getGlobalState().maskedTexts = undefined;
+    registerMaskedText("select $& from t where pw = 'p'", 'select $& from t where pw = ?');
+    registerMaskedText("select a$`b where pw = 'q'", "select a$`b where pw = ?");
+    const r2 = createRedactor();
+    expect(r2.redactString("select $& from t where pw = 'p'")).toBe('select $& from t where pw = ?');
+    expect(r2.redactString("X select a$`b where pw = 'q'")).toBe('X select a$`b where pw = ?');
   });
 });

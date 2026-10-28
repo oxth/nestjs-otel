@@ -21,7 +21,8 @@ function skipQuoted(sql: string, start: number, quote: string, backslash: boolea
  * instrumentation's default `maskStatementHook`). `$1`, `:name`, `?` placeholders and
  * identifiers containing digits are left alone, as are comments (`-- …`, block comments, and `# …` in MySQL mode).
  *
- * Default (MySQL) mode: `'…'` and `"…"` are strings and honour backslash escapes; block comments do not nest.
+ * Default (MySQL) mode: `'…'` and `"…"` are strings and honour backslash escapes; `` `…` `` identifiers
+ * (with the ``` `` ``` escape) are left alone; block comments do not nest.
  * `doubleQuotedStrings: false` selects PostgreSQL: `"…"` is an identifier, a backslash is an
  * ordinary character except inside `E'…'`, and `$$…$$` / `$tag$…$tag$` strings are masked; block comments nest.
  * An unterminated literal masks the rest of the statement.
@@ -62,6 +63,8 @@ export function maskSqlLiterals(sql: string, opts?: { doubleQuotedStrings?: bool
         flushTo = i - 1;
       }
       mask(flushTo, skipQuoted(sql, i, "'", backslash));
+    } else if (!pg && c === '`') {
+      i = skipQuoted(sql, i, '`', false);
     } else if (c === '"') {
       const end = skipQuoted(sql, i, '"', !pg);
       if (pg) i = end;
