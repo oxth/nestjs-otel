@@ -1,9 +1,14 @@
-import { type Span, SpanStatusCode } from '@opentelemetry/api';
+import { isSpanContextValid, type Span, SpanStatusCode } from '@opentelemetry/api';
 import { type ClassifyOptions, classifyError } from './classify';
 
 const MAX_CAUSE_DEPTH = 5;
 const recordedErrors = new WeakSet<object>();
 const recordedStacks = new WeakMap<Span, Set<string>>();
+// Stacks recorded per trace, so an error recorded on an inner span isn't recorded again
+// when it is logged later from an outer span of the same trace. Bounded: oldest traces drop out.
+const MAX_TRACKED_TRACES = 1000;
+const MAX_STACKS_PER_TRACE = 50;
+const stacksByTrace = new Map<string, string[]>();
 
 function describe(err: unknown): string {
   if (err instanceof Error) return err.stack ?? `${err.name}: ${err.message}`;
@@ -28,8 +33,21 @@ export function formatStack(err: unknown): string {
   return parts.join('\n');
 }
 
+function traceKey(span: Span): string | undefined {
+  const ctx = span.spanContext();
+  return isSpanContextValid(ctx) ? ctx.traceId : undefined;
+}
+
+/**
+ * Whether `stack` was already recorded on `span` or on any span of its trace. A stack also
+ * counts as recorded when it is the head of a recorded `formatStack` string: Nest logs
+ * `err.stack`, while `recordError` stores the stack followed by its `Caused by:` chain.
+ */
 export function hasStackRecorded(span: Span, stack: string): boolean {
-  return recordedStacks.get(span)?.has(stack) ?? false;
+  if (recordedStacks.get(span)?.has(stack)) return true;
+  const key = traceKey(span);
+  const stacks = key === undefined ? undefined : stacksByTrace.get(key);
+  return stacks?.some((s) => s === stack || s.startsWith(`${stack}\nCaused by: `)) ?? false;
 }
 
 export function markStackRecorded(span: Span, stack: string): void {
@@ -39,6 +57,17 @@ export function markStackRecorded(span: Span, stack: string): void {
     recordedStacks.set(span, set);
   }
   set.add(stack);
+
+  const key = traceKey(span);
+  if (key === undefined) return;
+  let stacks = stacksByTrace.get(key);
+  if (!stacks) {
+    if (stacksByTrace.size >= MAX_TRACKED_TRACES) stacksByTrace.delete(stacksByTrace.keys().next().value!);
+    stacks = [];
+    stacksByTrace.set(key, stacks);
+  }
+  if (stacks.length >= MAX_STACKS_PER_TRACE) stacks.shift();
+  stacks.push(stack);
 }
 
 function errorType(err: unknown): string {

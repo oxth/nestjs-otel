@@ -9,6 +9,7 @@ import {
 import { APP_INTERCEPTOR, ModulesContainer } from '@nestjs/core';
 import { getSdkHandle } from '../bootstrap/sdk';
 import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
+import { OtelLogger } from '../logs/otel-logger';
 import { getGlobalState } from '../shared/global-state';
 import { safely } from '../shared/safe';
 import { setClassifyDefaults } from '../tracing/decorators';
@@ -40,9 +41,10 @@ const instrumentedProvider: Provider = {
 const sharedProviders: Provider[] = [
   instrumentedProvider,
   TraceService,
+  OtelLogger,
   { provide: APP_INTERCEPTOR, useClass: HttpOtelInterceptor },
 ];
-const sharedExports = [TraceService];
+const sharedExports = [TraceService, OtelLogger];
 
 @Module({})
 export class OtelModule implements OnModuleInit, OnApplicationShutdown {

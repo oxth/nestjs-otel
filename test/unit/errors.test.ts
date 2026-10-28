@@ -1,4 +1,4 @@
-import { SpanStatusCode } from '@opentelemetry/api';
+import { context, SpanStatusCode, trace } from '@opentelemetry/api';
 import { BasicTracerProvider, InMemorySpanExporter, SimpleSpanProcessor } from '@opentelemetry/sdk-trace-base';
 import { BadRequestException, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { RpcException } from '@nestjs/microservices';
@@ -56,6 +56,16 @@ describe('errors', () => {
     recordError(s, err, opts);
     expect(hasStackRecorded(s, formatStack(err))).toBe(true);
     expect(hasStackRecorded(s, 'other')).toBe(false);
+  });
+  it('a stack recorded anywhere in the trace counts, including its head before "Caused by"', () => {
+    const err = new Error('boom', { cause: new Error('root') });
+    const inner = tracer.startSpan('inner');
+    recordError(inner, err, opts);
+    const sibling = tracer.startSpan('sibling', undefined, trace.setSpan(context.active(), inner));
+    expect(hasStackRecorded(sibling, formatStack(err))).toBe(true);
+    expect(hasStackRecorded(sibling, err.stack!)).toBe(true);
+    expect(hasStackRecorded(sibling, err.stack!.slice(0, 10))).toBe(false);
+    expect(hasStackRecorded(tracer.startSpan('other trace'), err.stack!)).toBe(false);
   });
   it('primitive throws are always recorded as events', () => {
     const s = tracer.startSpan('s');
