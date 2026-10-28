@@ -1,6 +1,6 @@
 import type { RedactOptions } from '../../src/index';
 import { describe, it, expect } from 'vitest';
-import { createRedactor, serializeBody } from '../../src/redact/redactor';
+import { createRedactor, registerMaskedText, serializeBody } from '../../src/redact/redactor';
 
 const r = createRedactor();
 
@@ -106,5 +106,16 @@ describe('serializeBody', () => {
   });
   it('does not truncate small bodies', () => {
     expect(serializeBody({ a: 1 }, 8192)).toEqual({ body: '{"a":1}', truncated: false });
+  });
+});
+
+describe('registerMaskedText', () => {
+  it('replaces registered texts in redactString, keeping the most recent 64', () => {
+    const r = createRedactor();
+    registerMaskedText('values (1, secret-0)', 'values (?, ?)');
+    expect(r.redactString('x values (1, secret-0) y values (1, secret-0)')).toBe('x values (?, ?) y values (?, ?)');
+    for (let i = 1; i <= 64; i++) registerMaskedText(`<${i}>`, '?');
+    expect(r.redactString('values (1, secret-0)')).toBe('values (1, secret-0)'); // the first entry was evicted
+    expect(r.redactString('<64> <1>')).toBe('? ?');
   });
 });

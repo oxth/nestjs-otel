@@ -51,7 +51,7 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   };
 
   const redactString = (value: string): string => {
-    let out = value;
+    let out = applyMaskedTexts(value);
     for (const p of patterns) {
       p.lastIndex = 0;
       out = out.replace(p, () => censor);
@@ -160,6 +160,30 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   };
 
   return { redact, redactString, isSensitiveKey, redactHeaders };
+}
+
+const MAX_MASKED_TEXTS = 64;
+
+/**
+ * Registers `raw` to be replaced by `masked` in every `redactString` result (error messages and stacks
+ * on spans, log bodies), for values only known at runtime, such as a failed statement with its parameters
+ * interpolated into a driver's error message. The most recent 64 are kept.
+ */
+export function registerMaskedText(raw: string, masked: string): void {
+  if (raw === '' || raw === masked) return;
+  const state = getGlobalState();
+  const texts = (state.maskedTexts ??= new Map());
+  texts.delete(raw);
+  if (texts.size >= MAX_MASKED_TEXTS) texts.delete(texts.keys().next().value!);
+  texts.set(raw, masked);
+}
+
+function applyMaskedTexts(value: string): string {
+  const texts = getGlobalState().maskedTexts;
+  if (!texts?.size) return value;
+  let out = value;
+  for (const [raw, masked] of texts) if (out.includes(raw)) out = out.replaceAll(raw, masked);
+  return out;
 }
 
 /**

@@ -13,6 +13,8 @@ export interface GlobalState {
   warned: Set<string>;
   redactor?: Redactor;
   db?: DbSettings;
+  /** Raw text → masked replacement, applied by every redactor's `redactString` (see `registerMaskedText`). */
+  maskedTexts?: Map<string, string>;
 }
 
 const STATE_KEY = Symbol.for('@oxth/nestjs-otel.state');

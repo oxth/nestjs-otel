@@ -3,6 +3,7 @@ import { getDefaultRedactor, serializeBody } from '../redact/redactor';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults } from '../tracing/decorators';
 import { handleResult, runInSpan } from '../tracing/wrap';
+import { maskStatementInError } from './error-statement';
 import { getDbSettings } from './settings';
 
 export type OrmScope = 'leaf' | 'container';
@@ -59,15 +60,16 @@ export function runOrmSpan<T>(call: OrmCall, fn: () => T): T {
     getClassifyDefaults,
     (span) => {
       let failed = false;
-      const onError = () => {
+      const onError = (err: unknown) => {
         failed = true;
+        safely('mask statement in error', () => maskStatementInError(err, call.system), undefined);
         if (safely('db settings', () => getDbSettings().captureParams, 'never') !== 'never') attachParams(span, call);
       };
       let result: T;
       try {
         result = context.with(context.active().setValue(ORM_SCOPE, { scope: call.scope ?? 'leaf' }), fn);
       } catch (err) {
-        onError();
+        onError(err);
         throw err;
       }
       return handleResult(result, {

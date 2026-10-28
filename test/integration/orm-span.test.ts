@@ -3,6 +3,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { runOrmSpan } from '../../src/orm/orm-span';
 import { type MethodWrapper, patchMethods, unpatchMethods } from '../../src/orm/patch';
 import { resolveDbSettings, setDbSettings } from '../../src/orm/settings';
+import { getDefaultRedactor } from '../../src/redact/redactor';
+import { getClassifyDefaults } from '../../src/tracing/decorators';
+import { runInSpan } from '../../src/tracing/wrap';
 import { setupInMemoryTracing } from './helpers/tracing';
 
 const t = setupInMemoryTracing();
@@ -151,6 +154,55 @@ describe('runOrmSpan', () => {
     ).rejects.toBe(e);
     expect(t.spans()[0].attributes['db.orm.params']).toBeUndefined();
     expect(t.spans()[0].status.code).toBe(SpanStatusCode.ERROR);
+  });
+});
+
+// MikroORM 6 (knex) prefixes driver errors with the statement, parameters interpolated.
+describe('statement in an ORM error message', () => {
+  const statement = "insert into \"users\" (\"email\", \"id\", \"password\") values ('d', 1, 'hunter2-SECRET')";
+  const fail = (system: string, sql = statement) => {
+    const err = new Error(`${sql} - duplicate key value violates unique constraint "users_pkey"`);
+    const run = () =>
+      runInSpan('UsersService.dup', () => ({}), getClassifyDefaults, () =>
+        runOrmSpan({ orm: 'mikro-orm', operation: 'insert', entity: 'User', system }, async () => {
+          throw err;
+        }),
+      );
+    return { err, run };
+  };
+
+  it('is masked in every span and log text; the error itself is unchanged', async () => {
+    const { err, run } = fail('postgresql');
+    const message = err.message;
+    await expect(run()).rejects.toBe(err);
+    expect(err.message).toBe(message);
+    const spans = t.spans();
+    expect(spans.map((s) => s.name)).toEqual(['MikroORM insert User', 'UsersService.dup']);
+    for (const s of spans) {
+      expect(s.status.message).toBe(
+        'insert into "users" ("email", "id", "password") values (?, ?, ?) - duplicate key value violates unique constraint "users_pkey"',
+      );
+      const ev = s.events.find((e) => e.name === 'exception');
+      if (ev) expect(JSON.stringify(ev.attributes)).not.toContain('hunter2-SECRET');
+    }
+    expect(spans[0].events.find((e) => e.name === 'exception')!.attributes!['exception.stacktrace']).toContain(
+      'values (?, ?, ?)',
+    );
+    expect(getDefaultRedactor().redactString(`failed: ${err.stack}`)).not.toContain('hunter2-SECRET');
+  });
+
+  it('uses MySQL quoting rules for mysql', async () => {
+    const { err, run } = fail('mysql', 'insert into `users` (`email`, `password`) values ("d", "hunter2-SECRET")');
+    await expect(run()).rejects.toBe(err);
+    expect(t.spans()[0].status.message).toBe(
+      'insert into `users` (`email`, `password`) values (?, ?) - duplicate key value violates unique constraint "users_pkey"',
+    );
+  });
+
+  it('leaves messages that do not start with a statement alone', async () => {
+    const { err, run } = fail('postgresql', "connect to 'db-1' failed");
+    await expect(run()).rejects.toBe(err);
+    expect(t.spans()[0].status.message).toBe(err.message);
   });
 });
 
