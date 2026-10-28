@@ -161,6 +161,20 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
   return { redact, redactString, isSensitiveKey, redactHeaders };
 }
 
+let defaultRedactor: Redactor | undefined;
+
+/**
+ * Redactor for places without module options (error events, `OtelLogger`, process errors):
+ * the default key and pattern set until `OtelModule` installs the one built from its options.
+ */
+export function getDefaultRedactor(): Redactor {
+  return (defaultRedactor ??= createRedactor());
+}
+
+export function setDefaultRedactor(r: Redactor): void {
+  defaultRedactor = r;
+}
+
 export function serializeBody(value: unknown, maxBytes: number): { body: string; truncated: boolean } {
   let json: string | undefined;
   try {

@@ -68,6 +68,20 @@ describe('OtelLogger', () => {
     expect(record.instrumentationScope.name).toBe(SCOPE_NAME);
   });
 
+  it('redacts secret values in OTLP bodies and exception events', () => {
+    const logger = new OtelLogger(undefined, { colors: false });
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl';
+    inSpan(() => {
+      logger.log('calling upstream with Bearer abc.def-123');
+      logger.error(`token ${jwt} rejected`, `Error: token ${jwt} rejected\n    at x (y.js:1:1)`);
+    });
+    const bodies = logExporter.getFinishedLogRecords().map((r) => r.body);
+    expect(bodies).toEqual(['calling upstream with [REDACTED]', 'token [REDACTED] rejected']);
+    const [ev] = exceptionEvents();
+    expect(ev!.attributes!['exception.message']).toBe('token [REDACTED] rejected');
+    expect(ev!.attributes!['exception.stacktrace']).toBe('Error: token [REDACTED] rejected\n    at x (y.js:1:1)');
+  });
+
   it('stringifies object messages for the OTLP body', () => {
     const logger = new OtelLogger(undefined, { colors: false });
     logger.warn({ a: 1 });

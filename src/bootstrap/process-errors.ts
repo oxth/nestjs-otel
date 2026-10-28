@@ -1,5 +1,6 @@
 import { logs, trace } from '@opentelemetry/api';
 import { formatStack, recordError } from '../errors/record';
+import { getDefaultRedactor } from '../redact/redactor';
 import { SCOPE_NAME } from '../shared/constants';
 import { getGlobalState } from '../shared/global-state';
 import { safely } from '../shared/safe';
@@ -51,7 +52,8 @@ function record(err: unknown, origin: string): void {
   safely(
     'uncaught error log',
     () => {
-      const message = describeMessage(err);
+      const { redactString } = getDefaultRedactor();
+      const message = redactString(describeMessage(err));
       logs.getLogger(SCOPE_NAME).emit({
         severityNumber: SEVERITY_FATAL,
         severityText: 'FATAL',
@@ -59,7 +61,7 @@ function record(err: unknown, origin: string): void {
         attributes: {
           'exception.type': describeType(err),
           'exception.message': message,
-          'exception.stacktrace': formatStack(err),
+          'exception.stacktrace': redactString(formatStack(err)),
           'process.uncaught.origin': origin,
         },
       });

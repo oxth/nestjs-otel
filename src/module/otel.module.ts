@@ -11,6 +11,7 @@ import { getSdkHandle } from '../bootstrap/sdk';
 import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { OtelLogger } from '../logs/otel-logger';
 import { MetricService } from '../metrics/metric.service';
+import { setDefaultRedactor } from '../redact/redactor';
 import { getGlobalState } from '../shared/global-state';
 import { safely } from '../shared/safe';
 import { setClassifyDefaults } from '../tracing/decorators';
@@ -35,6 +36,7 @@ const instrumentedProvider: Provider = {
   inject: [ModulesContainer, OTEL_OPTIONS],
   useFactory: (container: ModulesContainer, opts: ResolvedOtelOptions) => {
     safely('set classify defaults', () => setClassifyDefaults(opts.classify), undefined);
+    safely('set default redactor', () => setDefaultRedactor(opts.redactor), undefined);
     return safely('instrument application', () => instrumentApplication(container, opts), { wrapped: [] });
   },
 };

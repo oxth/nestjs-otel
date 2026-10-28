@@ -5,6 +5,7 @@ import { RpcException } from '@nestjs/microservices';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { classifyError } from '../../src/errors/classify';
 import { formatStack, hasStackRecorded, recordError } from '../../src/errors/record';
+import { createRedactor, setDefaultRedactor } from '../../src/redact/redactor';
 
 const exporter = new InMemorySpanExporter();
 const provider = new BasicTracerProvider({ spanProcessors: [new SimpleSpanProcessor(exporter)] });
@@ -86,5 +87,33 @@ describe('errors', () => {
     expect(f.events[0].attributes!['http.response.status_code']).toBe(400);
     expect(f.attributes['error.expected']).toBe(true);
     expect(f.status.code).toBe(SpanStatusCode.UNSET);
+  });
+
+  const JWT = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2lnbmF0dXJl';
+
+  it('redacts secret values in exception.message, exception.stacktrace and the status', () => {
+    const s = tracer.startSpan('s');
+    recordError(s, new Error(`bad token ${JWT}`, { cause: new Error(`Bearer ${JWT}`) }), opts);
+    s.end();
+    const [f] = exporter.getFinishedSpans();
+    const ev = f.events.find((e) => e.name === 'exception')!;
+    expect(ev.attributes!['exception.message']).toBe('bad token [REDACTED]');
+    expect(ev.attributes!['exception.stacktrace']).toContain('Error: bad token [REDACTED]');
+    expect(ev.attributes!['exception.stacktrace']).toContain('Caused by: Error: [REDACTED]');
+    expect(JSON.stringify(f.events) + f.status.message).not.toContain('eyJ');
+    expect(f.status.message).toBe('bad token [REDACTED]');
+  });
+
+  it('redacts exception.handled messages and honours the module redactor', () => {
+    setDefaultRedactor(createRedactor({ patterns: [/secret-\d+/], censor: '***' }));
+    try {
+      const s = tracer.startSpan('s');
+      recordError(s, new BadRequestException(`no secret-42 for ${JWT}`), opts);
+      s.end();
+      const [f] = exporter.getFinishedSpans();
+      expect(f.events[0].attributes!['exception.message']).toBe('no *** for ***');
+    } finally {
+      setDefaultRedactor(createRedactor());
+    }
   });
 });

@@ -69,3 +69,20 @@ describe('isInstalled', () => {
     }
   });
 });
+
+describe('http instrumentation query redaction', () => {
+  const http = () => {
+    const inst = buildInstrumentations(readBootstrapConfig({}), () => false).find(
+      (i) => i.instrumentationName === '@opentelemetry/instrumentation-http',
+    )!;
+    return inst.getConfig() as { redactedQueryParams?: string[]; redactedQueryParamsServer?: string[] };
+  };
+
+  it.each(['redactedQueryParams', 'redactedQueryParamsServer'] as const)('%s covers credentials and keeps the built-in list', (key) => {
+    const list = http()[key]!;
+    for (const name of ['token', 'access_token', 'refresh_token', 'id_token', 'api_key', 'apikey', 'password', 'secret', 'code']) {
+      expect(list).toContain(name);
+    }
+    for (const name of ['sig', 'Signature', 'AWSAccessKeyId', 'X-Amz-Security-Token']) expect(list).toContain(name);
+  });
+});

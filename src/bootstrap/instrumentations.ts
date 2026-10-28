@@ -5,6 +5,7 @@ import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
+import { DEFAULT_QUERY_PARAMS } from '../redact/defaults';
 import { safely } from '../shared/safe';
 import { ROOT_SPAN } from '../shared/symbols';
 import type { BootstrapConfig, InstrumentationName } from './config';
@@ -23,6 +24,8 @@ export const INSTRUMENTATIONS: InstrumentationEntry[] = [
     pkg: null,
     create: () =>
       new HttpInstrumentation({
+        redactedQueryParams: [...DEFAULT_QUERY_PARAMS],
+        redactedQueryParamsServer: [...DEFAULT_QUERY_PARAMS],
         requestHook(span, req) {
           safely(
             'http requestHook',

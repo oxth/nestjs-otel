@@ -65,3 +65,11 @@ describe.each(['express', 'fastify'])('%s', (adapter) => {
     await app.stop();
   });
 });
+
+it('redacts credential query parameters on the server span', async () => {
+  const app = await spawnApp({ entry: 'esm', preload: true, receiver });
+  expect((await app.get('/users/1?access_token=abc&password=p&ok=1')).status).toBe(200);
+  await app.stop();
+  const server = await receiver.waitFor(() => receiver.spans().find((s) => s.kind === SERVER));
+  expect(server.attributes['url.query']).toBe('access_token=REDACTED&password=REDACTED&ok=1');
+});

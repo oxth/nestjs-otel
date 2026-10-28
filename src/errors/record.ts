@@ -1,4 +1,5 @@
 import { isSpanContextValid, type Span, SpanStatusCode } from '@opentelemetry/api';
+import { getDefaultRedactor } from '../redact/redactor';
 import { type ClassifyOptions, classifyError } from './classify';
 
 const MAX_CAUSE_DEPTH = 5;
@@ -86,7 +87,8 @@ function errorMessage(err: unknown): string {
 export function recordError(span: Span, err: unknown, opts: ClassifyOptions): void {
   const { isError, httpStatus } = classifyError(err, opts);
   const type = errorType(err);
-  const message = errorMessage(err);
+  const { redactString } = getDefaultRedactor();
+  const message = redactString(errorMessage(err));
 
   if (!isError) {
     span.addEvent('exception.handled', {
@@ -105,8 +107,9 @@ export function recordError(span: Span, err: unknown, opts: ClassifyOptions): vo
     span.addEvent('exception', {
       'exception.type': type,
       'exception.message': message,
-      'exception.stacktrace': stack,
+      'exception.stacktrace': redactString(stack),
     });
+    // Dedupe on the raw stack: that's what a later `logger.error(err.stack)` passes in.
     markStackRecorded(span, stack);
   }
   span.setStatus({ code: SpanStatusCode.ERROR, message });

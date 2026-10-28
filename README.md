@@ -104,9 +104,23 @@ Prefer `--import` where you can.
 
 ## Errors and redaction
 
-Everything captured from requests (bodies, user ids, error data) goes through the redactor first. Matching is
-case-insensitive and ignores `-` and `_`, so `API_KEY`, `api-key` and `apiKey` are the same key. Matching values
-are replaced by `[REDACTED]`.
+What is redacted:
+
+- **Request and response bodies** (`http.request.body`, `http.response.body`): sensitive keys and value patterns,
+  using your `redact` options.
+- **Exception messages and stacks** (`exception.message`, `exception.stacktrace`, the span status message) and
+  **`OtelLogger` OTLP log bodies**: value patterns only (Bearer tokens, JWTs, plus your `redact.patterns`); there
+  are no keys to match in free text.
+- **Query strings** (`url.query` on server spans, `url.full` on client spans): parameters with a known credential
+  name (`token`, `access_token`, `refresh_token`, `id_token`, `api_key`, `apikey`, `password`, `secret`, `code`,
+  the default keys below, and instrumentation-http's own list such as `sig`, `X-Amz-Signature`) get the value
+  `REDACTED`. Names match exactly and case-sensitively, and `redact` options don't apply here.
+
+What is **not** redacted: `user.id` (from `capture.getUserId`), the URL path, other span attributes you or other
+instrumentations set, `OtelLogger` console output, and pino records (use pino's own `redact` option).
+
+Key matching is case-insensitive and ignores `-` and `_`, so `API_KEY`, `api-key` and `apiKey` are the same key.
+Matching values are replaced by `[REDACTED]`.
 
 Default sensitive keys (a key is redacted if it **contains** one of these):
 `password`, `passwd`, `secret`, `token`, `authorization`, `apikey`, `cookie`, `session`, `creditcard`,

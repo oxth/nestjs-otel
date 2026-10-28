@@ -2,6 +2,7 @@ import { ConsoleLogger, type ConsoleLoggerOptions, Injectable, type LogLevel, Op
 import { context as otelContext, isSpanContextValid, logs, type Span, SpanStatusCode, trace } from '@opentelemetry/api';
 import { inspect } from 'node:util';
 import { formatStack, hasStackRecorded, markStackRecorded } from '../errors/record';
+import { getDefaultRedactor } from '../redact/redactor';
 import { SCOPE_NAME } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { toSeverity } from './severity';
@@ -117,7 +118,7 @@ export class OtelLogger extends ConsoleLogger {
         logger.emit({
           severityNumber,
           severityText,
-          body: toBody(message),
+          body: getDefaultRedactor().redactString(toBody(message)),
           ...(context && { attributes: { 'nest.context': context } }),
           context: active,
         });
@@ -132,11 +133,12 @@ export class OtelLogger extends ConsoleLogger {
     // `logger.error(err)` (how Nest's ExceptionsHandler logs) passes the error itself.
     const stack = typeof errorStack === 'string' ? errorStack : message instanceof Error ? formatStack(message) : undefined;
     if (stack === undefined || hasStackRecorded(span, stack)) return;
-    const text = toBody(message);
+    const { redactString } = getDefaultRedactor();
+    const text = redactString(toBody(message));
     span.addEvent('exception', {
       ...(message instanceof Error && { 'exception.type': message.constructor?.name || message.name }),
       'exception.message': text,
-      'exception.stacktrace': stack,
+      'exception.stacktrace': redactString(stack),
     });
     span.setStatus({ code: SpanStatusCode.ERROR, message: text });
     markStackRecorded(span, stack);
