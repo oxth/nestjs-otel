@@ -1,3 +1,4 @@
+import type { RedactOptions } from '../../src/index';
 import { describe, it, expect } from 'vitest';
 import { createRedactor, serializeBody } from '../../src/redact/redactor';
 
@@ -32,6 +33,13 @@ describe('redactor', () => {
     });
     expect(c.redact({ email: 'a', password: 'p', phone: '1' })).toEqual({ email: '***', password: 'p', phone: 'x' });
   });
+  it('uses a custom censor literally (no replacement patterns)', () => {
+    const options: RedactOptions = { censor: '$&-$1' };
+    const c = createRedactor(options);
+    expect(c.redactString('auth Bearer abc.def')).toBe('auth $&-$1');
+    expect(c.redact({ password: 'p' })).toEqual({ password: '$&-$1' });
+  });
+
   it('does not mutate input', () => {
     const o = { password: 'p' };
     r.redact(o);

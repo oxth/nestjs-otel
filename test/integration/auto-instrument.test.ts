@@ -174,6 +174,14 @@ class UpperPipe implements PipeTransform {
   }
 }
 
+/** Has a `catch()` method but no `@Catch()`: a provider, not an exception filter. */
+@Injectable()
+class RetryService {
+  catch(): string {
+    return 'caught';
+  }
+}
+
 @Catch()
 class TeapotFilter implements ExceptionFilter {
   catch(_err: unknown, host: ArgumentsHost): void {
@@ -212,6 +220,7 @@ class GuardedController {
     HooksService,
     Child,
     DecoratedService,
+    RetryService,
     { provide: 'FACTORY', useFactory: () => new FactoryMade() },
     { provide: 'VALUE', useValue: new ValueMade() },
     { provide: 'CLASS', useClass: FactoryMade },
@@ -266,6 +275,7 @@ const classes: Function[] = [
   AllowGuard,
   UpperPipe,
   TeapotFilter,
+  RetryService,
   GuardedController,
 ];
 /** Span name, with the (route-renamed) test root span reported as `root`. */
@@ -398,6 +408,8 @@ describe('instrumentApplication', () => {
   it('does not wrap exception filters unless filters:true', async () => {
     const report = await boot();
     expect(report.wrapped).not.toContain('TeapotFilter.catch');
+    // Only `@Catch()` makes a filter; a provider that merely has a `catch()` method is traced.
+    expect(report.wrapped).toContain('RetryService.catch');
     await request(app!.getHttpServer()).get('/guarded/filtered').expect(418, 'teapot');
     expect(names()).toEqual(['GuardedController.filtered']);
 

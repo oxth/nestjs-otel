@@ -223,6 +223,20 @@ describe('HTTP failure context', () => {
     expect(rootSpan().attributes['user.id']).toBe('u-1');
   });
 
+  it('a throwing getUserId does not drop the request body', async () => {
+    await boot({
+      capture: {
+        getUserId: () => {
+          throw new Error('no user');
+        },
+      },
+    });
+    await request(app!.getHttpServer()).post('/users').send({ name: 'fail', password: 'p' }).expect(500);
+    const root = rootSpan();
+    expect(root.attributes['user.id']).toBeUndefined();
+    expect(JSON.parse(root.attributes['http.request.body'] as string)).toEqual({ name: 'fail', password: '[REDACTED]' });
+  });
+
   it('responseBody option captures redacted 5xx response payload', async () => {
     await boot({ capture: { responseBody: true } });
     await request(app!.getHttpServer()).get('/users/leaky/1').expect(503);

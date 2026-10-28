@@ -3,6 +3,7 @@ import { classifyError } from '../errors/classify';
 import { recordError } from '../errors/record';
 import type { ResolvedOtelOptions } from '../module/options';
 import { serializeBody } from '../redact/redactor';
+import { safely } from '../shared/safe';
 import { ROOT_SPAN } from '../shared/symbols';
 
 /** Root spans that already carry failure context (guard and interceptor paths can both fire). */
@@ -39,8 +40,14 @@ export function applyFailureContext(
   if (!isError || applied.has(root)) return;
   applied.add(root);
 
-  const userId = o.capture.getUserId(req);
-  if (userId !== undefined && userId !== null) root.setAttribute('user.id', String(userId));
+  safely(
+    'capture user id',
+    () => {
+      const userId = o.capture.getUserId(req);
+      if (userId !== undefined && userId !== null) root.setAttribute('user.id', String(userId));
+    },
+    undefined,
+  );
 
   if (!o.capture.requestBody || flags?.noCaptureBody) return;
   const contentType = header(req, 'content-type') ?? '';

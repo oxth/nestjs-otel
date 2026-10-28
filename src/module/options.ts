@@ -9,7 +9,7 @@ export interface OtelModuleOptions {
     guards?: boolean;
     interceptors?: boolean;
     pipes?: boolean;
-    /** Exception filters (classes with a `catch` method). Default `false`. */
+    /** Exception filters (classes decorated with `@Catch()`). Default `false`. */
     filters?: boolean;
     /** Class names always wrapped, even in dynamic modules. */
     include?: (string | RegExp)[];

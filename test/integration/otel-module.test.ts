@@ -143,7 +143,7 @@ describe('OtelModule', () => {
   it('does not warn when OTEL_SDK_DISABLED=true or the sdk is registered', async () => {
     getGlobalState().warned.clear();
     const warn = vi.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
-    vi.stubEnv('OTEL_SDK_DISABLED', 'true');
+    vi.stubEnv('OTEL_SDK_DISABLED', ' TRUE ');
     try {
       await boot([OtelModule.forRoot()]);
     } finally {

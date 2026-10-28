@@ -6,6 +6,9 @@ import { getClassifyDefaults, getSpanParamAttributes, NO_TRACE_META, TRACE_META 
 import { isWrapped, wrapForErrorRecording, wrapMethod } from '../tracing/wrap';
 import { OTEL_INSTRUMENTED, type ResolvedOtelOptions } from './options';
 
+/** Set by `@Catch()` (`CATCH_WATERMARK` in @nestjs/common's constants, not a public export). */
+const CATCH_WATERMARK = '__catch__';
+
 type Role = 'controller' | 'provider' | 'guard' | 'interceptor' | 'pipe' | 'filter';
 type AnyFn = (...a: any[]) => any;
 
@@ -85,7 +88,7 @@ function roleOf(cls: Function & { prototype: object }, isController: boolean): R
   if (typeof proto.canActivate === 'function') return 'guard';
   if (typeof proto.intercept === 'function') return 'interceptor';
   if (typeof proto.transform === 'function') return 'pipe';
-  if (typeof proto.catch === 'function') return 'filter';
+  if (safely('read catch metadata', () => Reflect.getMetadata(CATCH_WATERMARK, cls) === true, false)) return 'filter';
   return 'provider';
 }
 

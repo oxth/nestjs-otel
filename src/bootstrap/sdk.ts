@@ -118,7 +118,13 @@ function installShutdown(handle: SdkHandle): void {
   }
 }
 
+const MAX_ERROR_PREFIXES = 100;
 const errorLog = new Map<string, { last: number; suppressed: number }>();
+
+/** Test hook: number of message prefixes tracked for rate limiting. */
+export function exportErrorLogSize(): number {
+  return errorLog.size;
+}
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message;
@@ -130,7 +136,8 @@ function errorMessage(err: unknown): string {
   }
 }
 
-function reportExportError(err: unknown): void {
+/** Prints an export error to stderr, at most once per 60 s per message prefix. */
+export function reportExportError(err: unknown): void {
   const message = errorMessage(err);
   const prefix = message.slice(0, ERROR_PREFIX_LENGTH);
   const now = Date.now();
@@ -140,7 +147,10 @@ function reportExportError(err: unknown): void {
     return;
   }
   const suppressed = entry?.suppressed ?? 0;
+  // Re-insert so the map stays in last-reported order, then drop the oldest prefixes.
+  errorLog.delete(prefix);
   errorLog.set(prefix, { last: now, suppressed: 0 });
+  while (errorLog.size > MAX_ERROR_PREFIXES) errorLog.delete(errorLog.keys().next().value!);
   const suffix = suppressed > 0 ? ` (${suppressed} similar errors suppressed)` : '';
   process.stderr.write(`@oxth/nestjs-otel: telemetry export error: ${message}${suffix}\n`);
 }

@@ -7,6 +7,7 @@ import {
   type Provider,
 } from '@nestjs/common';
 import { APP_INTERCEPTOR, ModulesContainer } from '@nestjs/core';
+import { readBootstrapConfig } from '../bootstrap/config';
 import { getSdkHandle } from '../bootstrap/sdk';
 import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { OtelLogger } from '../logs/otel-logger';
@@ -82,7 +83,7 @@ export class OtelModule implements OnModuleInit, OnApplicationShutdown {
     safely(
       'register check',
       () => {
-        if (getSdkHandle() || process.env.OTEL_SDK_DISABLED === 'true') return;
+        if (getSdkHandle() || readBootstrapConfig(process.env).disabled) return;
         const { warned } = getGlobalState();
         if (warned.has(REGISTER_MISSING_WARNING)) return;
         warned.add(REGISTER_MISSING_WARNING);

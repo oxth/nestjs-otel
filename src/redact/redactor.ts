@@ -53,7 +53,7 @@ export function createRedactor(opts: RedactOptions = {}): Redactor {
     let out = value;
     for (const p of patterns) {
       p.lastIndex = 0;
-      out = out.replace(p, censor);
+      out = out.replace(p, () => censor);
       p.lastIndex = 0;
     }
     return out;

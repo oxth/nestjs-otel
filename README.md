@@ -237,7 +237,7 @@ export class OrdersService {
 | `autoInstrument.guards` | `false` | Span per guard. |
 | `autoInstrument.interceptors` | `false` | Span per interceptor. |
 | `autoInstrument.pipes` | `false` | Span per pipe. |
-| `autoInstrument.filters` | `false` | Span per exception filter (classes with a `catch()` method). |
+| `autoInstrument.filters` | `false` | Span per exception filter (classes decorated with `@Catch()`). |
 | `autoInstrument.include` | `[]` | Class names (string or RegExp) always wrapped, even in dynamic modules. |
 | `autoInstrument.exclude` | `[]` | Class names (string or RegExp) never wrapped. Wins over `include` and `@Trace()`. |
 | `errors.treat4xxAsError` | `false` | Mark spans of 4xx `HttpException`s as errors. |
@@ -294,8 +294,8 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
 - **Dynamic modules**: providers declared in dynamic modules (`forRoot()`/`register()`) are not auto-traced. Use
   `@Trace()` or `autoInstrument.include`. Providers of static library modules (e.g. `DiscoveryModule`,
   `TerminusModule`) **are** traced; use `autoInstrument.exclude` for those.
-- **Exception filters**: classes with a `catch()` method are treated as exception filters and are not auto-traced
-  unless `autoInstrument.filters: true`.
+- **Exception filters**: classes decorated with `@Catch()` are treated as exception filters and are not auto-traced
+  unless `autoInstrument.filters: true`. Other providers with a `catch()` method are traced like any provider.
 - **Guards**: an error thrown in a guard is recorded on the server span (with the request body and user id), but
   there is no `http.response.body` for it.
 - **Shutdown**: on SIGTERM/SIGINT, if nothing else listens for the signal, the SDK is flushed and shut down, then the
@@ -304,7 +304,10 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
   down after Nest's shutdown hooks, so telemetry from in-flight requests and the hooks is still exported. If your
   own signal handler calls `process.exit()` without closing the Nest app, nothing is flushed.
 - **Uncaught exceptions**: if no other `uncaughtException` listener exists, the library flushes telemetry for up to
-  2 s, prints the error and exits with code 1, like Node's default but with the FATAL log delivered.
+  2 s, prints the error and exits with code 1, like Node's default but with the FATAL log delivered. Differences
+  from Node's default crash: the exit is delayed by the flush (at most 2 s), `--abort-on-uncaught-exception` no
+  longer produces a core dump, and the printed error lacks Node's source-line context (the `file:line` excerpt
+  with a caret above the stack).
 - **One Nest app per process** is the supported setup; options are process-global.
 - **Overhead**: `pnpm bench` measures p99 latency of the e2e fixture with and without the library (a tracked goal,
   not a gate; CI posts the result to the job summary).
