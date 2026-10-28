@@ -3,13 +3,15 @@ import { once } from 'node:events';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'tsdown';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { type OtlpReceiver, startOtlpReceiver } from '../e2e/helpers/otlp-receiver';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const outDir = join(here, '.tmp/bootstrap');
 
-async function run(mode: string) {
-  const child = spawn(process.execPath, [join(here, 'scripts/uncaught.mjs'), mode], {
+async function run(mode: string, script = 'uncaught.mjs', env: Record<string, string> = {}) {
+  const child = spawn(process.execPath, [join(here, 'scripts', script), mode], {
+    env: { ...process.env, NODE_ENV: '', OTEL_LOG_LEVEL: '', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let stdout = '';
@@ -24,7 +26,7 @@ async function run(mode: string) {
       .split('\n')
       .filter((l) => l.startsWith(`${kind} `))
       .map((l) => JSON.parse(l.slice(kind.length + 1)));
-  return { code: code as number | null, stderr, lines };
+  return { code: code as number | null, stdout, stderr, lines };
 }
 
 describe('process-level errors', () => {
@@ -74,9 +76,53 @@ describe('process-level errors', () => {
     expect(r.lines('SPAN')).toEqual([{ name: 'doomed', status: 2, events: ['exception'] }]);
   }, 20000);
 
-  it('does not add uncaughtException/unhandledRejection listeners and is idempotent', async () => {
+  it('adds exactly one uncaughtException listener, no unhandledRejection listener, and is idempotent', async () => {
     const r = await run('listeners');
     expect(r.code).toBe(0);
-    expect(r.lines('LISTENERS')).toEqual([{ uncaught: 0, rejection: 0, monitor: 1 }]);
+    expect(r.lines('LISTENERS')).toEqual([{ uncaught: 1, rejection: 0, monitor: 1 }]);
   }, 20000);
+
+  describe('real OTLP path', () => {
+    let receiver: OtlpReceiver;
+    let env: Record<string, string>;
+    beforeAll(async () => {
+      receiver = await startOtlpReceiver();
+      env = {
+        OTEL_EXPORTER_OTLP_ENDPOINT: receiver.url,
+        OTEL_EXPORTER_OTLP_PROTOCOL: 'http/json',
+        OTEL_BLRP_SCHEDULE_DELAY: '100',
+        OTEL_METRICS_EXPORTER: 'none',
+        OTEL_TRACES_EXPORTER: 'none',
+        OTEL_SERVICE_NAME: 'process-errors-test',
+      };
+    });
+    afterAll(() => receiver.close());
+
+    it('delivers the fatal log record to the collector and still exits 1', async () => {
+      const r = await run('throw', 'otlp-crash.mjs', env);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('kaboom');
+      const log = await receiver.waitFor(() =>
+        receiver.logs().find((l) => l.severityNumber === 21 && l.attributes['process.uncaught.origin'] === 'uncaughtException'),
+      );
+      expect(log.attributes['exception.message']).toBe('kaboom');
+    }, 20000);
+
+    it('delivers unhandled rejections the same way', async () => {
+      const r = await run('rejection', 'otlp-crash.mjs', env);
+      expect(r.code).toBe(1);
+      expect(r.stderr).toContain('kaboom');
+      const log = await receiver.waitFor(() =>
+        receiver.logs().find((l) => l.severityNumber === 21 && l.attributes['process.uncaught.origin'] === 'unhandledRejection'),
+      );
+      expect(log.attributes['exception.message']).toBe('kaboom');
+    }, 20000);
+
+    it('does not exit when the app has its own uncaughtException listener', async () => {
+      const r = await run('user-listener', 'otlp-crash.mjs', env);
+      expect(r.code).toBe(0);
+      expect(r.stdout).toContain('user handled');
+      expect(r.stdout).toContain('still running');
+    }, 20000);
+  });
 });
