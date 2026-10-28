@@ -57,6 +57,22 @@ describe('runOrmSpan', () => {
     expect(child.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
   });
 
+  it('a sibling call after a leaf completes still gets its own span', async () => {
+    await runOrmSpan({ orm: 'typeorm', operation: 'find' }, async () => 1);
+    await runOrmSpan({ orm: 'typeorm', operation: 'count' }, async () => 1);
+    expect(t.spans().map((s) => s.name)).toEqual(['TypeORM find', 'TypeORM count']);
+  });
+
+  it('a leaf inside a container suppresses its own nested calls', async () => {
+    await runOrmSpan({ orm: 'mikro-orm', operation: 'transactional', scope: 'container' }, async () => {
+      await runOrmSpan({ orm: 'mikro-orm', operation: 'find', entity: 'User' }, async () => {
+        await Promise.resolve();
+        return runOrmSpan({ orm: 'mikro-orm', operation: 'execute' }, async () => 1);
+      });
+    });
+    expect(t.spans().map((s) => s.name)).toEqual(['MikroORM find User', 'MikroORM transactional']);
+  });
+
   it('error: records exception, attaches redacted params, rethrows same error', async () => {
     const e = new Error('dup');
     await expect(
@@ -154,6 +170,22 @@ describe('patchMethods', () => {
     expect(new A().find()).toBe(2);
     unpatchMethods(A.prototype, ['find']);
     expect(new A().find()).toBe(1);
+  });
+
+  it('unpatching an inherited method removes the own property', () => {
+    class B {
+      m() {
+        return 1;
+      }
+    }
+    class C extends B {}
+    const w: MethodWrapper = (orig) => function (this: any, ...a) { return orig.apply(this, a) + 1; };
+    expect(patchMethods(C.prototype, ['m'], w)).toEqual(['m']);
+    expect(new C().m()).toBe(2);
+    unpatchMethods(C.prototype, ['m']);
+    expect(Object.prototype.hasOwnProperty.call(C.prototype, 'm')).toBe(false);
+    patchMethods(B.prototype, ['m'], w);
+    expect(new C().m()).toBe(2);
   });
 
   it('keeps this, name and length; tolerates undefined proto', () => {

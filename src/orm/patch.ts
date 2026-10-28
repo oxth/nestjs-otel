@@ -5,7 +5,13 @@ export type MethodWrapper = (original: (...a: any[]) => any, methodName: string)
 
 const ORIGINAL = Symbol.for('@oxth/nestjs-otel.orm-original');
 
-type Marked = ((...a: any[]) => any) & { [ORIGINAL]?: (...a: any[]) => any };
+const ORIGINAL_DESC = Symbol.for('@oxth/nestjs-otel.orm-original-descriptor');
+
+type Marked = ((...a: any[]) => any) & {
+  [ORIGINAL]?: (...a: any[]) => any;
+  /** The own property descriptor the method had before patching; undefined when it was inherited. */
+  [ORIGINAL_DESC]?: PropertyDescriptor;
+};
 
 /**
  * Replaces each listed method on `proto` with `wrapper(original, name)`. Absent, non-function and
@@ -22,7 +28,9 @@ export function patchMethods(proto: object | undefined, methods: readonly string
       () => {
         const replacement = wrapper(original as (...a: any[]) => any, name);
         safely('copy method metadata', () => copyMethodMetadata(original, replacement), undefined);
+        const own = Object.getOwnPropertyDescriptor(proto, name);
         Object.defineProperty(replacement, ORIGINAL, { value: original, configurable: true });
+        Object.defineProperty(replacement, ORIGINAL_DESC, { value: own, configurable: true });
         Object.defineProperty(proto, name, { value: replacement, writable: true, configurable: true, enumerable: false });
         return true;
       },
@@ -39,9 +47,13 @@ export function unpatchMethods(proto: object | undefined, methods: readonly stri
     const current = (proto as Record<string, unknown>)[name] as Marked | undefined;
     const original = typeof current === 'function' ? current[ORIGINAL] : undefined;
     if (!original) continue;
+    const desc = current![ORIGINAL_DESC];
     safely(
       `unpatch ${name}`,
-      () => Object.defineProperty(proto, name, { value: original, writable: true, configurable: true, enumerable: false }),
+      () => {
+        if (desc) Object.defineProperty(proto, name, desc);
+        else delete (proto as Record<string, unknown>)[name];
+      },
       undefined,
     );
   }
