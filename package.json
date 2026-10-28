@@ -68,7 +68,8 @@
     "nestjs-pino": "*",
     "pino": "*",
     "reflect-metadata": "^0.2.0",
-    "rxjs": "^7.8.0"
+    "rxjs": "^7.8.0",
+    "typeorm": ">=0.3.0 <2"
   },
   "peerDependenciesMeta": {
     "pino": {
@@ -84,6 +85,9 @@
       "optional": true
     },
     "@nestjs/microservices": {
+      "optional": true
+    },
+    "typeorm": {
       "optional": true
     }
   },
@@ -119,9 +123,11 @@
     "pino": "^10.4.0",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
+    "sql.js": "^1.15.2",
     "supertest": "^7.3.1",
     "tsdown": "^0.23.3",
     "tsx": "^4.23.15",
+    "typeorm": "^1.1.2",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
   }
