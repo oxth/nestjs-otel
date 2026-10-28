@@ -17,6 +17,9 @@ export const TYPEORM_MANAGER_METHODS: readonly string[] = [
   'findOneBy',
   'findOneOrFail',
   'findOneByOrFail',
+  'findByIds', // 0.3 only
+  'findOneById', // 0.3 only
+  'preload',
   'findAndCount',
   'findAndCountBy',
   'count',
@@ -37,6 +40,9 @@ export const TYPEORM_MANAGER_METHODS: readonly string[] = [
   'restore',
   'remove',
   'softRemove',
+  'recover',
+  'updateAll',
+  'deleteAll',
   'increment',
   'decrement',
   'clear',
@@ -70,8 +76,11 @@ export const TYPEORM_WRITE_QB_CLASSES: readonly string[] = Object.keys(WRITE_QB_
 
 const EXECUTE = ['execute'] as const;
 
-/** Methods that also accept an entity instance (or array) without an explicit target. */
-const INSTANCE_FORM = new Set(['save', 'remove', 'softRemove']);
+/**
+ * Methods that also accept an entity instance (or array) without an explicit target. Like TypeORM,
+ * the first argument is a target only when more than one argument is given.
+ */
+const INSTANCE_FORM = new Set(['save', 'remove', 'softRemove', 'recover']);
 
 const protoOf = (moduleExports: any, name: string): object | undefined =>
   safely(`typeorm ${name}`, () => moduleExports?.[name]?.prototype, undefined);
@@ -121,7 +130,7 @@ function managerCall(moduleExports: any, self: any, method: string, args: unknow
   if (method === 'query') return { ...base, params: () => args[1] };
 
   const first = args[0];
-  if (INSTANCE_FORM.has(method) && !isTarget(moduleExports, first)) {
+  if (INSTANCE_FORM.has(method) && !(args.length > 1 && isTarget(moduleExports, first))) {
     const sample = Array.isArray(first) ? first[0] : first;
     const ctor = sample && typeof sample === 'object' ? (sample as object).constructor : undefined;
     return { ...base, ...describeTarget(self, ctor), params: () => args };

@@ -11,6 +11,7 @@ interface User {
   id: number;
   email: string;
   password: string;
+  deletedAt?: Date | null;
 }
 
 const UserSchema = new EntitySchema<User>({
@@ -20,6 +21,7 @@ const UserSchema = new EntitySchema<User>({
     id: { type: Number, primary: true, generated: true },
     email: { type: String },
     password: { type: String },
+    deletedAt: { type: 'datetime', deleteDate: true, nullable: true },
   },
 });
 
@@ -71,6 +73,22 @@ describe('TypeORM instrumentation', () => {
   it('save with an entity schema target resolves the entity', async () => {
     await ds.manager.save(UserSchema, { email: 's', password: 'p' });
     expect(ormSpans().map((s) => s.name)).toEqual(['TypeORM save User']);
+  });
+
+  it('updateAll, deleteAll, recover and preload get one span each', async () => {
+    await ds.manager.insert('User', { id: 7, email: 'r', password: 'p' });
+    t.reset();
+    await ds.manager.updateAll('User', { email: 'all' });
+    await ds.manager.preload('User', { id: 7, email: 'pre' });
+    await ds.manager.recover('User', { id: 7, email: 'all', password: 'p' });
+    await ds.manager.deleteAll('User');
+    expect(ormSpans().map((s) => s.name)).toEqual([
+      'TypeORM updateAll User',
+      'TypeORM preload User',
+      'TypeORM recover User',
+      'TypeORM deleteAll User',
+    ]);
+    expect(only('TypeORM deleteAll User').attributes['db.collection.name']).toBe('users');
   });
 
   it('transaction callback calls are traced as children', async () => {
