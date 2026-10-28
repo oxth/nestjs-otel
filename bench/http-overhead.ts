@@ -44,7 +44,7 @@ async function startApp(entry: string, preload: boolean, env: Record<string, str
   const args = [...(preload ? ['--import', '@oxth/nestjs-otel/register'] : []), entry];
   const childEnv: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v !== undefined && !k.startsWith('OTEL_') && k !== 'NODE_OPTIONS') childEnv[k] = v;
+    if (v !== undefined && !k.startsWith('OTEL_') && k !== 'NODE_OPTIONS' && k !== 'NODE_PATH') childEnv[k] = v;
   }
   const child: ChildProcess = spawn(process.execPath, args, {
     cwd: FIXTURE_DIR,

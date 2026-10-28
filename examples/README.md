@@ -20,19 +20,20 @@ docker compose -f examples/docker-compose.yml up -d
 Then start any Nest app that uses the library. To use the e2e fixture app (from the repo root):
 
 ```bash
-pnpm test:e2e            # builds the fixture into test/e2e/.tmp/fixture
-cd test/e2e/.tmp/fixture
+pnpm test:e2e   # builds the fixture into <os tmpdir>/oxth-nestjs-otel-e2e-<hash>/fixture
+cd "$(ls -d "${TMPDIR:-/tmp}"/oxth-nestjs-otel-e2e-*/fixture | head -n 1)"
 OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318 \
 OTEL_SERVICE_NAME=fixture \
 LOGGER=nest \
+PORT=3001 \
 node --import @oxth/nestjs-otel/register esm/entry-esm.js
 ```
 
-The app prints `listening:<port>`. Call it, then look at the data in Grafana > Explore:
+The app listens on port 3001 (Grafana already has 3000). Call it, then look at the data in Grafana > Explore:
 
 ```bash
-curl localhost:<port>/users/1
-curl localhost:<port>/users/500   # an error: recorded on the span, with the request body
+curl localhost:3001/users/1
+curl localhost:3001/users/500   # an error: recorded on the span
 ```
 
 `LOGGER=nest` wires `OtelLogger`, so log lines carry `trace_id` and show up in Loki next to the trace.

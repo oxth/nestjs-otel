@@ -1,4 +1,5 @@
 import { register as registerHooks } from 'node:module';
+import { pathToFileURL } from 'node:url';
 import { readBootstrapConfig } from './bootstrap/config';
 import { installProcessErrorMonitor } from './bootstrap/process-errors';
 import { startSdk } from './bootstrap/sdk';
@@ -25,11 +26,11 @@ safely(
     const state = getGlobalState();
     if (state.registered) return;
     state.registered = true;
-    if (__OXTH_FORMAT__ === 'esm') {
-      registerHooks('@opentelemetry/instrumentation/hook.mjs', import.meta.url);
-    } else {
-      warnIfLoadedLate();
-    }
+    // The ESM loader hook is needed in the CJS build too: a CJS app still loads ESM-only
+    // packages (Nest 12, and express through it) via the ESM loader.
+    const parentURL = __OXTH_FORMAT__ === 'esm' ? import.meta.url : pathToFileURL(__filename).href;
+    safely('register esm loader hook', () => registerHooks('@opentelemetry/instrumentation/hook.mjs', parentURL), undefined);
+    if (__OXTH_FORMAT__ === 'cjs') warnIfLoadedLate();
     startSdk(readBootstrapConfig(process.env));
     installProcessErrorMonitor();
   },

@@ -41,11 +41,17 @@ export async function stopAllApps(signal: NodeJS.Signals = 'SIGKILL'): Promise<v
 }
 const STOP_TIMEOUT_MS = 10_000;
 
-/** Strip anything from the test runner's env that would leak into the child's OTel or Node config. */
+/**
+ * Strip anything from the test runner's env that would leak into the child's OTel or Node config.
+ * NODE_PATH in particular: pnpm's bin shims point it at the repo's hoisted store, which would make
+ * every package resolvable from the fixture.
+ */
 function baseEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
-    if (v === undefined || k.startsWith('OTEL_') || k === 'NODE_OPTIONS' || k.startsWith('VITEST')) continue;
+    if (v === undefined || k.startsWith('OTEL_') || k === 'NODE_OPTIONS' || k === 'NODE_PATH' || k.startsWith('VITEST')) {
+      continue;
+    }
     env[k] = v;
   }
   return env;

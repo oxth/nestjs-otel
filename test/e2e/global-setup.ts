@@ -9,7 +9,8 @@ function run(cmd: string, args: string[], cwd: string): string {
 
 /**
  * Builds and packs the library, then installs the fixture app from the tarball into
- * test/e2e/.tmp/fixture (its own pnpm project, so there is exactly one @nestjs/core)
+ * <os tmpdir>/oxth-nestjs-otel-e2e-<hash>/fixture (its own pnpm project outside the repo, so
+ * there is exactly one @nestjs/core and the repo's node_modules can't mask a missing dependency)
  * and compiles it into esm/ and cjs/.
  */
 export default function setup(): void {

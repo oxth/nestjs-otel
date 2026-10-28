@@ -10,7 +10,7 @@ class RootModule {}
 
 /**
  * Starts the fixture app. `ADAPTER` = express | fastify. `LOGGER` = nest (OtelLogger) | pino (nestjs-pino);
- * unset keeps Nest's default logger.
+ * unset keeps Nest's default logger. `PORT` defaults to 0 (any free port).
  */
 export async function bootstrap(): Promise<INestApplication> {
   const adapterName = process.env.ADAPTER ?? 'express';
@@ -38,7 +38,7 @@ export async function bootstrap(): Promise<INestApplication> {
     app.useLogger(app.get(OtelLogger));
   }
 
-  await app.listen(0, '127.0.0.1');
+  await app.listen(Number(process.env.PORT ?? 0), '127.0.0.1');
   const { port } = app.getHttpServer().address() as AddressInfo;
   process.stdout.write(`listening:${port}\n`);
   return app;

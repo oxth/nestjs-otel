@@ -1,6 +1,8 @@
+import { execFileSync } from 'node:child_process';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { type OtlpReceiver, startOtlpReceiver } from './helpers/otlp-receiver';
 import { spawnApp } from './helpers/spawn-app';
+import { FIXTURE_DIR } from './paths';
 
 const SERVER = 2;
 
@@ -73,11 +75,40 @@ it('cjs app with --import shares sdk state', async () => {
   expect(app.stderr()).not.toContain('@oxth/nestjs-otel');
 });
 
-it('express spans are instrumented in ESM (hook works)', async () => {
-  const app = await spawnApp({ entry: 'esm', preload: true, receiver });
-  await app.get('/users/1');
-  await receiver.waitFor(() => receiver.spans().find((s) => s.attributes['express.type'] !== undefined));
-  await app.stop();
+it('fixture uses an isolated pnpm layout (express and fastify only reachable via their Nest adapters)', () => {
+  // Resolved in a child without the runner's NODE_PATH, i.e. as the fixture app sees it.
+  const script = `
+    const { createRequire } = require('node:module');
+    const r = createRequire(process.cwd() + '/noop.js');
+    const can = (req, p) => { try { req.resolve(p); return true; } catch { return false; } };
+    console.log(JSON.stringify({
+      express: can(r, 'express'),
+      fastify: can(r, 'fastify'),
+      viaAdapter: can(createRequire(r.resolve('@nestjs/platform-express')), 'express'),
+    }));`;
+  const env = { ...process.env };
+  delete env.NODE_PATH;
+  const out = execFileSync(process.execPath, ['-e', script], { cwd: FIXTURE_DIR, env, encoding: 'utf8' });
+  expect(JSON.parse(out)).toEqual({ express: false, fastify: false, viaAdapter: true });
+});
+
+describe.each([
+  ['esm', true],
+  ['cjs', false],
+] as const)('adapter spans with entry %s preload=%s', (entry, preload) => {
+  it('express spans are instrumented (hook works)', async () => {
+    const app = await spawnApp({ entry, preload, receiver });
+    await app.get('/users/1');
+    await receiver.waitFor(() => receiver.spans().find((s) => s.attributes['express.type'] !== undefined));
+    await app.stop();
+  });
+
+  it('fastify spans are instrumented (hook works)', async () => {
+    const app = await spawnApp({ entry, preload, receiver, env: { ADAPTER: 'fastify' } });
+    await app.get('/users/1');
+    await receiver.waitFor(() => receiver.spans().find((s) => s.attributes['fastify.type'] !== undefined));
+    await app.stop();
+  });
 });
 
 it('OTEL_SDK_DISABLED produces no telemetry and app still serves', async () => {
