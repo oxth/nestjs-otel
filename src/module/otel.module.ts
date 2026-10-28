@@ -6,8 +6,9 @@ import {
   type OnModuleInit,
   type Provider,
 } from '@nestjs/common';
-import { ModulesContainer } from '@nestjs/core';
+import { APP_INTERCEPTOR, ModulesContainer } from '@nestjs/core';
 import { getSdkHandle } from '../bootstrap/sdk';
+import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { getGlobalState } from '../shared/global-state';
 import { safely } from '../shared/safe';
 import { setClassifyDefaults } from '../tracing/decorators';
@@ -36,7 +37,11 @@ const instrumentedProvider: Provider = {
   },
 };
 
-const sharedProviders: Provider[] = [instrumentedProvider, TraceService];
+const sharedProviders: Provider[] = [
+  instrumentedProvider,
+  TraceService,
+  { provide: APP_INTERCEPTOR, useClass: HttpOtelInterceptor },
+];
 const sharedExports = [TraceService];
 
 @Module({})

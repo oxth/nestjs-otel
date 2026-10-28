@@ -9,6 +9,8 @@ export interface OtelModuleOptions {
     guards?: boolean;
     interceptors?: boolean;
     pipes?: boolean;
+    /** Exception filters (classes with a `catch` method). Default `false`. */
+    filters?: boolean;
     /** Class names always wrapped, even in dynamic modules. */
     include?: (string | RegExp)[];
     /** Class names never wrapped. Wins over `include` and `@Trace()`. */
@@ -31,6 +33,7 @@ export interface ResolvedOtelOptions {
     guards: boolean;
     interceptors: boolean;
     pipes: boolean;
+    filters: boolean;
     include: (string | RegExp)[];
     exclude: (string | RegExp)[];
   };
@@ -70,6 +73,7 @@ export function resolveOptions(o: OtelModuleOptions = {}): ResolvedOtelOptions {
       guards: a.guards ?? false,
       interceptors: a.interceptors ?? false,
       pipes: a.pipes ?? false,
+      filters: a.filters ?? false,
       include: a.include ?? [],
       exclude: a.exclude ?? [],
     },

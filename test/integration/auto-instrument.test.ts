@@ -1,6 +1,9 @@
 import {
+  type ArgumentsHost,
   type CanActivate,
+  Catch,
   Controller,
+  type ExceptionFilter,
   type DynamicModule,
   type ExecutionContext,
   Get,
@@ -13,6 +16,7 @@ import {
   type OnModuleInit,
   Param,
   type PipeTransform,
+  UseFilters,
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
@@ -170,8 +174,21 @@ class UpperPipe implements PipeTransform {
   }
 }
 
+@Catch()
+class TeapotFilter implements ExceptionFilter {
+  catch(_err: unknown, host: ArgumentsHost): void {
+    host.switchToHttp().getResponse<{ status(c: number): { send(b: string): void } }>().status(418).send('teapot');
+  }
+}
+
 @Controller('guarded')
 class GuardedController {
+  @Get('filtered')
+  @UseFilters(TeapotFilter)
+  filtered(): never {
+    throw new Error('filtered');
+  }
+
   @Get()
   @UseGuards(ExplodingGuard)
   get(): string {
@@ -205,7 +222,8 @@ class MiscModule implements NestModule {
     // Root span for the request, like the HTTP instrumentation would create.
     consumer
       .apply((_req: unknown, res: { on(e: string, f: () => void): void }, next: () => void) => {
-        trace.getTracer('test').startActiveSpan('root', (span) => {
+        // Marked, because the HTTP interceptor renames it by route.
+        trace.getTracer('test').startActiveSpan('root', { attributes: { 'test.root': true } }, (span) => {
           res.on('finish', () => span.end());
           next();
         });
@@ -247,9 +265,13 @@ const classes: Function[] = [
   ExplodingGuard,
   AllowGuard,
   UpperPipe,
+  TeapotFilter,
   GuardedController,
 ];
-const names = () => t.spans().map((s) => s.name).filter((n) => n !== 'root');
+/** Span name, with the (route-renamed) test root span reported as `root`. */
+const label = (s: { name: string; attributes: Record<string, unknown> }) => (s.attributes['test.root'] ? 'root' : s.name);
+const labels = () => t.spans().map(label);
+const names = () => labels().filter((n) => n !== 'root');
 
 const pristine = new Map(classes.map((c) => [c, Object.getOwnPropertyDescriptors(c.prototype)]));
 
@@ -268,7 +290,7 @@ describe('instrumentApplication', () => {
   it('wraps controllers and static-module providers', async () => {
     await boot();
     await request(app!.getHttpServer()).get('/users/1').expect(200);
-    const spans = t.spans().filter((s) => s.name !== 'root');
+    const spans = t.spans().filter((s) => label(s) !== 'root');
     expect(names()).toEqual(['UsersService.find', 'UsersController.get']);
     const [svc, ctrl] = spans;
     expect(svc!.parentSpanContext?.spanId).toBe(ctrl!.spanContext().spanId);
@@ -333,32 +355,32 @@ describe('instrumentApplication', () => {
     expect(report.wrapped.filter((n) => n.endsWith('.find') && !n.startsWith('Users'))).toEqual(['Child.find']);
     expect(Base.prototype.find).toBe(pristine.get(Base)!.find!.value);
     app!.get(Child).find();
-    expect(t.spans().map((s) => s.name)).toEqual(['Child.find']);
+    expect(labels()).toEqual(['Child.find']);
   });
 
   it('skips methods that already have @Span', async () => {
     const report = await boot();
     expect(report.wrapped).not.toContain('DecoratedService.run');
     app!.get(DecoratedService).run();
-    expect(t.spans().map((s) => s.name)).toEqual(['custom.span']);
+    expect(labels()).toEqual(['custom.span']);
   });
 
   it('does not wrap guards/pipes/interceptors by default but records guard errors on root span', async () => {
     await boot();
     await request(app!.getHttpServer()).get('/guarded').expect(500);
-    const root = t.spans().find((s) => s.name === 'root')!;
+    const root = t.spans().find((s) => label(s) === 'root')!;
     expect(root.events.find((e) => e.name === 'exception')!.attributes!['exception.message']).toBe('guard broke');
-    expect(t.spans().map((s) => s.name)).not.toContain('ExplodingGuard.canActivate');
+    expect(labels()).not.toContain('ExplodingGuard.canActivate');
 
     t.reset();
     await request(app!.getHttpServer()).get('/guarded/ok/a').expect(200, 'A');
-    expect(t.spans().map((s) => s.name)).toEqual(['GuardedController.ok', 'root']);
+    expect(labels()).toEqual(['GuardedController.ok', 'root']);
   });
 
   it('wraps guards and pipes when enabled', async () => {
     await boot({ autoInstrument: { guards: true, pipes: true } });
     await request(app!.getHttpServer()).get('/guarded/ok/a').expect(200, 'A');
-    expect(t.spans().map((s) => s.name)).toEqual([
+    expect(labels()).toEqual([
       'AllowGuard.canActivate',
       'UpperPipe.transform',
       'GuardedController.ok',
@@ -367,10 +389,23 @@ describe('instrumentApplication', () => {
 
     t.reset();
     await request(app!.getHttpServer()).get('/guarded').expect(500);
-    const names = t.spans().map((s) => s.name);
+    const names = labels();
     expect(names).toEqual(['ExplodingGuard.canActivate', 'root']);
-    const root = t.spans().find((s) => s.name === 'root')!;
+    const root = t.spans().find((s) => label(s) === 'root')!;
     expect(root.status.code).toBe(2);
+  });
+
+  it('does not wrap exception filters unless filters:true', async () => {
+    const report = await boot();
+    expect(report.wrapped).not.toContain('TeapotFilter.catch');
+    await request(app!.getHttpServer()).get('/guarded/filtered').expect(418, 'teapot');
+    expect(names()).toEqual(['GuardedController.filtered']);
+
+    await app!.close();
+    const enabled = await boot({ autoInstrument: { filters: true } });
+    expect(enabled.wrapped).toContain('TeapotFilter.catch');
+    await request(app!.getHttpServer()).get('/guarded/filtered').expect(418, 'teapot');
+    expect(names()).toEqual(['GuardedController.filtered', 'TeapotFilter.catch']);
   });
 
   it('respects controllers:false / providers:false', async () => {

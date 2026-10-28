@@ -1,11 +1,12 @@
 import { ModuleRef, type ModulesContainer } from '@nestjs/core';
 import { applyFailureContext } from '../http/failure-context';
+import { NO_CAPTURE_BODY_META } from '../http/no-capture-body.decorator';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults, getSpanParamAttributes, NO_TRACE_META, TRACE_META } from '../tracing/decorators';
 import { isWrapped, wrapForErrorRecording, wrapMethod } from '../tracing/wrap';
 import { OTEL_INSTRUMENTED, type ResolvedOtelOptions } from './options';
 
-type Role = 'controller' | 'provider' | 'guard' | 'interceptor' | 'pipe';
+type Role = 'controller' | 'provider' | 'guard' | 'interceptor' | 'pipe' | 'filter';
 type AnyFn = (...a: any[]) => any;
 
 const LIFECYCLE_HOOKS = new Set([
@@ -84,6 +85,7 @@ function roleOf(cls: Function & { prototype: object }, isController: boolean): R
   if (typeof proto.canActivate === 'function') return 'guard';
   if (typeof proto.intercept === 'function') return 'interceptor';
   if (typeof proto.transform === 'function') return 'pipe';
+  if (typeof proto.catch === 'function') return 'filter';
   return 'provider';
 }
 
@@ -100,6 +102,8 @@ function roleEnabled(role: Role, o: ResolvedOtelOptions): boolean {
       return a.interceptors;
     case 'pipe':
       return a.pipes;
+    case 'filter':
+      return a.filters;
   }
 }
 
@@ -128,9 +132,15 @@ function guardErrorHandler(err: unknown, args: unknown[]): void {
   safely(
     'record guard error',
     () => {
-      const ctx = args[0] as { getType?(): string; switchToHttp?(): { getRequest(): unknown } } | undefined;
+      const ctx = args[0] as
+        | { getType?(): string; switchToHttp?(): { getRequest(): unknown }; getHandler?(): unknown; getClass?(): unknown }
+        | undefined;
       if (!current || ctx?.getType?.() !== 'http' || !ctx.switchToHttp) return;
-      applyFailureContext(ctx.switchToHttp().getRequest(), err, current);
+      // Same precedence as Reflector.getAllAndOverride: handler, then class.
+      const noCaptureBody = [ctx.getHandler?.(), ctx.getClass?.()].some(
+        (t) => t !== undefined && hasMeta(NO_CAPTURE_BODY_META, t),
+      );
+      applyFailureContext(ctx.switchToHttp().getRequest(), err, current, { noCaptureBody });
     },
     undefined,
   );

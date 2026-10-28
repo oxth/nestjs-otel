@@ -77,6 +77,7 @@ describe('resolveOptions', () => {
       guards: false,
       interceptors: false,
       pipes: false,
+      filters: false,
       include: [],
       exclude: [],
     });
