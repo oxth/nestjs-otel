@@ -25,6 +25,25 @@ const UserSchema = new EntitySchema<User>({
   },
 });
 
+class Note {
+  id!: number;
+  body!: string;
+  deletedAt?: Date | null;
+}
+
+const NoteSchema = new EntitySchema<Note>({
+  name: 'Note',
+  target: Note,
+  tableName: 'notes',
+  columns: {
+    id: { type: Number, primary: true, generated: true },
+    body: { type: String },
+    deletedAt: { type: 'datetime', deleteDate: true, nullable: true },
+  },
+});
+
+const note = (body: string) => Object.assign(new Note(), { body });
+
 const t = setupInMemoryTracing();
 let ds: DataSource;
 
@@ -37,7 +56,7 @@ const only = (name: string) => {
 
 beforeAll(async () => {
   patchTypeorm(typeorm);
-  ds = new DataSource({ type: 'sqljs', entities: [UserSchema], synchronize: true });
+  ds = new DataSource({ type: 'sqljs', entities: [UserSchema, NoteSchema], synchronize: true });
   await ds.initialize();
 });
 
@@ -48,6 +67,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await ds.query('DELETE FROM users');
+  await ds.query('DELETE FROM notes');
   t.reset();
 });
 
@@ -137,6 +157,76 @@ describe('TypeORM instrumentation', () => {
     expect(s.status.code).toBe(SpanStatusCode.ERROR);
     expect(JSON.parse(s.attributes['db.orm.params'] as string)).toEqual([
       { id: 1, email: 'dup', password: '[REDACTED]' },
+    ]);
+  });
+
+  it('failed query builder insert never exposes generated parameter values', async () => {
+    await ds.manager.insert('User', { id: 1, email: 'z', password: 'p' });
+    t.reset();
+    await expect(
+      ds.createQueryBuilder().insert().into('User').values({ id: 1, email: 'z', password: 'hunter2' }).execute(),
+    ).rejects.toThrow();
+    const params = only('TypeORM insert User').attributes['db.orm.params'] as string;
+    expect(params).not.toContain('hunter2');
+    expect(params).toContain('[REDACTED]');
+    expect(JSON.parse(params).values).toEqual({ id: 1, email: 'z', password: '[REDACTED]' });
+  });
+
+  it('failed query builder update never exposes generated parameter values', async () => {
+    await ds.manager.insert('User', [
+      { id: 1, email: 'a', password: 'p' },
+      { id: 2, email: 'b', password: 'p' },
+    ]);
+    t.reset();
+    await expect(
+      ds
+        .createQueryBuilder()
+        .update('User')
+        .set({ id: 1, password: 'hunter2' })
+        .where('id = :id', { id: 2 })
+        .execute(),
+    ).rejects.toThrow();
+    const params = only('TypeORM update User').attributes['db.orm.params'] as string;
+    expect(params).not.toContain('hunter2');
+    expect(params).toContain('[REDACTED]');
+    expect(JSON.parse(params).parameters.id).toBe(2);
+  });
+
+  it('failed select query builder with object-form where never exposes values', async () => {
+    await expect(
+      ds.getRepository('User').createQueryBuilder('u').where({ password: 'hunter2' }).andWhere('nope = 1').getMany(),
+    ).rejects.toThrow();
+    const params = only('TypeORM getMany User').attributes['db.orm.params'] as string;
+    expect(params).not.toContain('hunter2');
+    expect(params).toContain('[REDACTED]');
+  });
+
+  it('instance-form save/remove/recover resolve the entity from the instance', async () => {
+    const one = await ds.manager.save(note('a'));
+    const many = await ds.manager.save([note('b'), note('c')]);
+    await ds.manager.softRemove(one);
+    await ds.manager.recover(one);
+    await ds.manager.recover([...many]);
+    await ds.manager.remove(many);
+    await ds.manager.remove(one);
+    expect(ormSpans().map((s) => s.name)).toEqual([
+      'TypeORM save Note',
+      'TypeORM save Note',
+      'TypeORM softRemove Note',
+      'TypeORM recover Note',
+      'TypeORM recover Note',
+      'TypeORM remove Note',
+      'TypeORM remove Note',
+    ]);
+    expect(ormSpans().every((s) => s.attributes['db.collection.name'] === 'notes')).toBe(true);
+  });
+
+  it('class target resolves the entity', async () => {
+    await ds.manager.find(Note);
+    await ds.manager.save(Note, { body: 'x' });
+    expect(ormSpans().map((s) => [s.name, s.attributes['db.collection.name']])).toEqual([
+      ['TypeORM find Note', 'notes'],
+      ['TypeORM save Note', 'notes'],
     ]);
   });
 

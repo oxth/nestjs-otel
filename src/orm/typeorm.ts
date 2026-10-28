@@ -3,7 +3,7 @@ import {
   type InstrumentationConfig,
   InstrumentationNodeModuleDefinition,
 } from '@opentelemetry/instrumentation';
-import { PACKAGE_VERSION } from '../shared/constants';
+import { CENSOR, PACKAGE_VERSION } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { toDbSystemName } from './db-system';
 import { type OrmCall, isInsideOrmLeaf, runOrmSpan } from './orm-span';
@@ -69,7 +69,7 @@ const WRITE_QB_OPERATIONS: Record<string, string> = {
   InsertQueryBuilder: 'insert',
   UpdateQueryBuilder: 'update',
   DeleteQueryBuilder: 'delete',
-  SoftDeleteQueryBuilder: 'softDelete',
+  // SoftDeleteQueryBuilder is not exported from `typeorm` (0.3 or 1.x); soft deletes are traced via the manager.
 };
 
 export const TYPEORM_WRITE_QB_CLASSES: readonly string[] = Object.keys(WRITE_QB_OPERATIONS);
@@ -115,7 +115,13 @@ function fallbackName(target: any): string | undefined {
 
 function describeTarget(self: any, target: unknown): { entity?: string; collection?: string } {
   if (target === undefined || target === null) return {};
-  const metadata = safely('typeorm metadata', () => dataSourceOf(self)?.getMetadata(target), undefined);
+  let metadata: any;
+  try {
+    // Expected to fail for unknown targets (e.g. a plain object's constructor): stay silent.
+    metadata = dataSourceOf(self)?.getMetadata(target);
+  } catch {
+    metadata = undefined;
+  }
   const entity = safely('typeorm entity', () => metadata?.name ?? fallbackName(target), undefined);
   const collection = safely('typeorm table', () => metadata?.tableName, undefined);
   return {
@@ -138,6 +144,24 @@ function managerCall(moduleExports: any, self: any, method: string, args: unknow
   return { ...base, ...describeTarget(self, first), params: () => args.slice(1) };
 }
 
+/** TypeORM's `createParameter` names generated parameters `orm_param_N` (0.3 and 1.x). */
+const GENERATED_PARAM = /^orm_param_\d+$/;
+
+const VALUE_OPERATIONS = new Set(['insert', 'update']);
+
+/**
+ * Query builder parameters for capture. Generated parameters carry the values of `.values()`, `.set()`
+ * and object-form `.where()` under keys the key-based redactor can't judge, so they are always censored;
+ * the keyed `valuesSet` of an insert/update is included instead so the redactor masks sensitive fields.
+ */
+function queryBuilderParams(self: any, operation: string): unknown {
+  const raw = self.getParameters() as Record<string, unknown>;
+  const parameters: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(raw ?? {})) parameters[key] = GENERATED_PARAM.test(key) ? CENSOR : value;
+  const values = VALUE_OPERATIONS.has(operation) ? self.expressionMap?.valuesSet : undefined;
+  return values === undefined ? { parameters } : { values, parameters };
+}
+
 function queryBuilderCall(self: any, operation: string): OrmCall {
   const metadata = safely('typeorm qb metadata', () => self?.expressionMap?.mainAlias?.metadata, undefined);
   const entity = safely('typeorm qb entity', () => metadata?.name, undefined);
@@ -148,7 +172,7 @@ function queryBuilderCall(self: any, operation: string): OrmCall {
     entity: typeof entity === 'string' ? entity : undefined,
     collection: typeof collection === 'string' ? collection : undefined,
     system: systemOf(self),
-    params: () => self.getParameters(),
+    params: () => queryBuilderParams(self, operation),
   };
 }
 
