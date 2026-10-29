@@ -153,8 +153,8 @@ class RecordingSpan implements BullmqSpan {
           this.span.setStatus({ code: SpanStatusCode.ERROR, message: getDefaultRedactor().redactString(exception) });
           return;
         }
+        // recordError sets ERROR with the redacted message; for non-errors it leaves the status alone.
         recordError(this.span, exception, getClassifyDefaults());
-        this.span.setStatus({ code: SpanStatusCode.ERROR });
       },
       undefined,
     );

@@ -78,6 +78,19 @@ describe('bullmq telemetry adapter', () => {
     span.end();
     const v = tracing.spans()[0].attributes['bullmq.job.failed.reason'];
     expect(v).toBe(getDefaultRedactor().redactString(input));
+    expect(v).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+    expect(v).toContain('[REDACTED]');
+  });
+
+  it('failed reason on an event is redacted', () => {
+    const input = 'bad password=hunter2 token eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.sig';
+    const span = t().tracer.startSpan('process emails', { kind: 4 });
+    span.addEvent('job failed', { 'bullmq.job.failed.reason': input });
+    span.end();
+    const v = tracing.spans()[0].events[0].attributes?.['bullmq.job.failed.reason'];
+    expect(v).toBe(getDefaultRedactor().redactString(input));
+    expect(v).not.toContain('eyJhbGciOiJIUzI1NiJ9');
+    expect(v).toContain('[REDACTED]');
   });
 
   it.each(['getNextJob', 'extendLocks', 'moveStalledJobsToWait', 'complete', 'close', 'retryJobs'])(
@@ -133,8 +146,10 @@ describe('bullmq telemetry adapter', () => {
     b.end();
     const [sa, sb] = tracing.spans();
     expect(sa.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sa.status.message).toBe('boom');
     expect(sa.events.some((e) => e.name === 'exception')).toBe(true);
     expect(sb.status.code).toBe(SpanStatusCode.ERROR);
+    expect(sb.status.message).toBe('redis down');
   });
 
   it('never throws', () => {
