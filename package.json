@@ -1,6 +1,6 @@
 {
   "name": "@oxth/nestjs-otel",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "OpenTelemetry for NestJS",
   "license": "MIT",
   "repository": {
@@ -54,7 +54,8 @@
   "files": [
     "dist",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "CHANGELOG.md"
   ],
   "engines": {
     "node": ">=22.15.0"

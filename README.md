@@ -678,10 +678,13 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
 
 ## Roadmap
 
-Plan 1 (core) and Plan 2 (database tracing for TypeORM and MikroORM, with pg, mysql2 and mongodb) are done. Planned next:
+0.1.0 covers HTTP, errors, logs and metrics, databases (TypeORM, MikroORM, pg, mysql2, mongodb), BullMQ, and the
+TCP, Redis, Kafka, RabbitMQ and SQS microservice transports. See [CHANGELOG.md](CHANGELOG.md). Candidates for later
+versions:
 
-- **Plan 3**: microservice handler spans, BullMQ, job data and message payloads, microservice metrics.
-- **Plan 4**: integrations beyond HTTP and pino, and opt-in request header capture (using `redactHeaders`).
+- Context propagation for NATS, MQTT and gRPC.
+- Opt-in request header capture (using `redactHeaders`).
+- GraphQL and WebSocket gateways.
 
 ## License
 
