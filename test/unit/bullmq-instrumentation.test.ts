@@ -56,8 +56,10 @@ function makeModule() {
     name = 'emails';
     impl: (job: any) => Promise<any> = async () => 'ok';
     originalCalls = 0;
+    lastArgs: any[] = [];
     callProcessJob(job: any, _token?: string) {
       this.originalCalls++;
+      this.lastArgs = [job, _token];
       return this.impl(job);
     }
   }
@@ -141,6 +143,8 @@ describe('callProcessJob success', () => {
     const { result, span } = await runWorker(w, jobOf());
     expect(result).toBe('ok');
     expect(w.originalCalls).toBe(1);
+    expect(w.lastArgs[1]).toBe('tok');
+    expect(w.lastArgs[0]).toMatchObject({ name: 'send' });
     expect(span.attributes).toMatchObject({
       'bullmq.job.attempt': 1,
       'bullmq.job.attempts.max': 3,
@@ -158,6 +162,28 @@ describe('callProcessJob success', () => {
     expect(wait[0].value.sum).toBeLessThan(0.7);
   });
 
+});
+
+describe('sync processors', () => {
+  it('sync return resolves', async () => {
+    const w = new mod.Worker();
+    w.impl = (() => 'ok') as any;
+    const { result, thrown, span } = await runWorker(w, jobOf());
+    expect(thrown).toBe(false);
+    expect(result).toBe('ok');
+    expect(span.attributes['bullmq.job.outcome']).toBe('completed');
+  });
+  it('sync throw rethrows the same error and is recorded', async () => {
+    const w = new mod.Worker();
+    const err = new Error('sync');
+    w.impl = (() => {
+      throw err;
+    }) as any;
+    const { error, span } = await runWorker(w, jobOf());
+    expect(error).toBe(err);
+    expect(span.status.code).toBe(SpanStatusCode.ERROR);
+    expect(span.attributes['bullmq.job.outcome']).toBe('failed');
+  });
 });
 
 describe('callProcessJob failure', () => {

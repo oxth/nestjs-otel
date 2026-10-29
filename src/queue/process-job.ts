@@ -123,7 +123,8 @@ export function runProcessJob<T>(worker: any, job: any, run: () => Promise<T>): 
 
   let promise: Promise<T>;
   try {
-    promise = run();
+    // The real processor may return a plain value or any thenable; normalise so `.then` always exists.
+    promise = Promise.resolve(run());
   } catch (err) {
     onFail(err);
     throw err;
