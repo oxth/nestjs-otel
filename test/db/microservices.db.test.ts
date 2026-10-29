@@ -60,6 +60,16 @@ function isAncestor(ancestor: FlatSpan, span: FlatSpan): boolean {
   return false;
 }
 
+/**
+ * Waits until `ancestor` is on `span`'s parent chain: the spans in between (broker consumer spans,
+ * the HTTP server span) end later than the handler and may arrive in a later export batch.
+ */
+async function expectChained(ancestor: FlatSpan, span: FlatSpan): Promise<void> {
+  await receiver.waitFor(() => isAncestor(ancestor, span), WAIT_MS).catch(() => {
+    throw new Error(`${ancestor.name} is not an ancestor of ${span.name}`);
+  });
+}
+
 const isRedisSpan = (s: FlatSpan): boolean => (s.attributes['db.system.name'] ?? s.attributes['db.system']) === 'redis';
 
 describe.skipIf(!urls)('microservices', { timeout: 120_000 }, () => {
@@ -106,20 +116,20 @@ describe.skipIf(!urls)('microservices', { timeout: 120_000 }, () => {
       // TCP and Redis carry the context in our envelope; Kafka and RabbitMQ through the broker
       // instrumentation's producer and consumer spans, which sit in between.
       if (transport === 'tcp' || transport === 'redis') expect(handler.parentSpanId).toBe(send.spanId);
-      else expect(isAncestor(send, handler)).toBe(true);
-      const server = receiver.spans().find((s) => s.name.startsWith('GET') && s.traceId === svc.traceId);
-      expect(server && isAncestor(server, svc)).toBe(true);
+      else await expectChained(send, handler);
+      const server = await wait((s) => s.name.startsWith('GET') && s.kind === SERVER && s.traceId === svc.traceId);
+      await expectChained(server, svc);
 
       if (transport === 'redis') {
         await app.stop();
-        // Command spans name the command only: no keys, no values.
-        const commands = receiver.spans().filter(isRedisSpan);
-        expect(commands.length).toBeGreaterThan(0);
-        for (const s of commands) {
-          for (const key of ['db.statement', 'db.query.text']) {
-            if (s.attributes[key] !== undefined) expect(String(s.attributes[key])).toMatch(/^\w+$/);
-          }
-        }
+        // Command spans carry a statement, and it is the command name only: no keys, no values.
+        const statements = receiver
+          .spans()
+          .filter(isRedisSpan)
+          .flatMap((s) => ['db.statement', 'db.query.text'].map((k) => s.attributes[k]))
+          .filter((v) => v !== undefined);
+        expect(statements.length).toBeGreaterThan(0);
+        for (const v of statements) expect(String(v)).toMatch(/^[a-z]+$/i);
       }
     });
 
@@ -135,7 +145,7 @@ describe.skipIf(!urls)('microservices', { timeout: 120_000 }, () => {
           'messaging.destination.name': 'orders',
           'messaging.operation.type': 'process',
         });
-        expect(isAncestor(svc, handler)).toBe(true);
+        await expectChained(svc, handler);
         return;
       }
       const svc = await wait((s) => s.name === 'MsClientService.created');
@@ -149,7 +159,7 @@ describe.skipIf(!urls)('microservices', { timeout: 120_000 }, () => {
         'messaging.destination.name': 'user.created',
         'nestjs.microservice.kind': 'event',
       });
-      expect(isAncestor(emit, handler)).toBe(true);
+      await expectChained(emit, handler);
     });
 
     it('secret never leaks on success', async () => {
