@@ -32,14 +32,14 @@ jobs:
           NEST_VERSION: ${{ matrix.nest }}
 
   db:
-    name: db (nest ${{ matrix.nest }}, typeorm ${{ matrix.typeorm }}, mikro ${{ matrix.mikro }})
+    name: db (nest ${{ matrix.nest }}, typeorm ${{ matrix.typeorm }}, mikro ${{ matrix.mikro }}, bullmq ${{ matrix.bullmq }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { nest: 12, typeorm: '^1', mikro: '^7' }
-          - { nest: 11, typeorm: '^0.3', mikro: '^6' }
+          - { nest: 12, typeorm: '^1', mikro: '^7', bullmq: '^6' }
+          - { nest: 11, typeorm: '^0.3', mikro: '^6', bullmq: '5.24.0' }
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -57,6 +57,7 @@ jobs:
           NEST_VERSION: ${{ matrix.nest }}
           TYPEORM_VERSION: ${{ matrix.typeorm }}
           MIKRO_VERSION: ${{ matrix.mikro }}
+          BULLMQ_VERSION: ${{ matrix.bullmq }}
 
   bench:
     name: overhead benchmark

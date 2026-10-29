@@ -30,3 +30,19 @@ export async function loadDbModule(): Promise<Type | undefined> {
   }
   throw new Error(`unknown DB ${db}`);
 }
+
+/**
+ * The queue module selected by `QUEUE` (bullmq), connected to `REDIS_URL`. Without `QUEUE` nothing is
+ * loaded: no queue package is required.
+ */
+export async function loadQueueModule(): Promise<Type | undefined> {
+  const queue = process.env.QUEUE;
+  if (!queue) return undefined;
+  const url = process.env.REDIS_URL;
+  if (!url) throw new Error('REDIS_URL is required with QUEUE');
+  if (queue === 'bullmq') {
+    const { createQueueModule } = await import('./queue/queue.module.js');
+    return createQueueModule(url);
+  }
+  throw new Error(`unknown QUEUE ${queue}`);
+}

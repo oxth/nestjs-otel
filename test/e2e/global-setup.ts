@@ -17,15 +17,18 @@ function major(range: string): number {
 
 /**
  * The fixture's dependency versions for `NEST_VERSION` (default 12), `TYPEORM_VERSION` (default ^1) and
- * `MIKRO_VERSION` (default ^7). Integrations (`@nestjs/typeorm`, `@mikro-orm/nestjs`) follow the major of
- * the package they integrate.
+ * `MIKRO_VERSION` (default ^7) and `BULLMQ_VERSION` (default ^6.5.1). Integrations (`@nestjs/typeorm`,
+ * `@mikro-orm/nestjs`) follow the major of the package they integrate; `@nestjs/bullmq` follows Nest.
  */
 function fixtureVersions(name: string): string | undefined {
   const nest = process.env.NEST_VERSION ?? '12';
   const typeorm = process.env.TYPEORM_VERSION ?? '^1';
   const mikro = process.env.MIKRO_VERSION ?? '^7';
+  const bullmq = process.env.BULLMQ_VERSION ?? '^6.5.1';
   if (NEST_CORE.includes(name)) return nest;
   if (name === '@nestjs/typeorm') return `^${major(nest)}`;
+  if (name === '@nestjs/bullmq') return `^${major(nest)}`;
+  if (name === 'bullmq') return bullmq;
   if (name === 'typeorm') return typeorm;
   if (name === '@mikro-orm/nestjs') return `^${major(mikro)}`;
   if (name.startsWith('@mikro-orm/')) return mikro;

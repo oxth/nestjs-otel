@@ -274,6 +274,112 @@ Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure (CI
 `NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`) and `MIKRO_VERSION` (default `^7`), e.g.
 `NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 pnpm test:db`.
 
+## Queues (BullMQ)
+
+With `bullmq` installed, `register` instruments it automatically: producers and workers get spans, and the trace
+continues from the HTTP request that enqueued a job into the worker that processes it.
+
+Supported: BullMQ `>=5.24.0 <7` (optional peer dependency), including `@nestjs/bullmq`. The instrumentation is only
+enabled when `bullmq` is installed and in range.
+
+### What a trace looks like
+
+```
+POST /jobs
+└─ JobsController.enqueue
+   └─ JobsService.enqueue
+      └─ add emails                    (producer span)
+         └─ process emails             (consumer span)
+            └─ EmailsProcessor.process
+```
+
+The `process` span is a child of the `add` span, and retried attempts stay in the same trace, each with its own
+`process` span.
+
+### Recorded operations
+
+- Producers: `add`, `addBulk`, `addFlow`, `addBulkFlows` and flow `addNode`, as `add emails`, `addFlow parents`, ...
+  (`messaging.operation.type = send`).
+- Workers: `process` (`process emails`, `messaging.operation.type = process`), one per job attempt.
+
+Internal BullMQ operations are not traced: polling for jobs, lock renewal, stalled-job checks and admin calls
+(`getJob`, `getJobs`, ...) run with tracing suppressed. An idle worker records no spans.
+
+Span attributes: `messaging.system = bullmq`, `messaging.operation.name`, `messaging.operation.type`,
+`messaging.destination.name` (the queue), `messaging.message.id` (the job id), `messaging.batch.message_count`, and
+a fixed allowlist of `bullmq.*` attributes (`bullmq.job.name`, `bullmq.job.id`, `bullmq.job.attempts.made`, ...).
+The `process` span adds `bullmq.job.attempt`, `bullmq.job.attempts.max`, `bullmq.job.outcome` and, on failure,
+`bullmq.job.will_retry`.
+
+### Context propagation
+
+BullMQ propagates the trace context itself, in its own format: a JSON W3C carrier stored in the job options. It is
+the same format as [`bullmq-otel`](https://github.com/appsignal/bullmq-otel), so services using `bullmq-otel` and
+services using this library join the same traces.
+
+If your app passes its own `telemetry` (for example `BullModule.forRoot({ telemetry: new BullMQOtel('app') })`),
+it wins: the library never replaces it, and BullMQ's spans appear once. When that telemetry has a `meter`, BullMQ
+emits its own `bullmq.jobs.*` metrics and the library's job metrics are skipped. Errors, attempts and job data
+are still recorded on the `process` span.
+
+Caveats:
+
+- **`FlowProducer`**: BullMQ only propagates trace context to flow nodes that have an `opts` object. Pass
+  `opts: {}` (or any options) on each node to keep children in the flow's trace. The same applies to `bullmq-otel`.
+- A job added without propagated context (for example with `telemetry: { omitContext: true }`, or by a producer
+  without telemetry) starts its own trace. It is not attached to whatever span the worker was created in.
+
+### Job data and masking
+
+`bullmq.captureData` decides when `bullmq.job.data` is recorded on the `process` span: `'error'` (default, only
+when the job fails), `'always'` or `'never'`. `bullmq.maxDataBytes` (default `8192`) caps the serialized size;
+longer values are truncated and `bullmq.job.data.truncated` is set. Data goes through the same redactor as bodies
+(see [Errors and redaction](#errors-and-redaction)).
+
+```ts
+OtelModule.forRoot({ bullmq: { captureData: 'error', maxDataBytes: 8192 } });
+```
+
+Job return values are never recorded, and `bullmq.job.result`, job options and progress are dropped from spans,
+so a secret in a result cannot reach a backend.
+
+### Errors and attempts
+
+A failed job shows the exception event (with the stack) on the innermost span, for example
+`EmailsProcessor.process`; the `process` span gets the error status only. `bullmq.job.will_retry` is `true` when
+another attempt is left (never for `UnrecoverableError`).
+
+Control-flow outcomes are not errors: a job that moves itself to delayed, waiting, waiting-children, or is
+rate-limited only sets `bullmq.job.outcome` (`delayed`, `waiting`, `waiting-children`, `rate-limited`). They record
+no error status and no metrics.
+
+### Metrics
+
+Meter `@oxth/nestjs-otel`, attributes `messaging.system`, `messaging.destination.name`,
+`messaging.operation.name` and `bullmq.job.name`:
+
+| Metric | Type | Notes |
+| --- | --- | --- |
+| `bullmq.jobs.completed` | counter | Completed attempts. |
+| `bullmq.jobs.failed` | counter | Failed attempts, with `bullmq.job.will_retry`. |
+| `messaging.process.duration` | histogram, `s` | Processor time; `error.type` on failure. |
+| `bullmq.job.wait_time` | histogram, `s` | Enqueue (plus delay) to start; first attempt only. |
+
+### Not traced
+
+Sandboxed processors (a processor file path, which BullMQ runs in a child process) are not instrumented inside the
+child. Only the `process` span in the parent is recorded.
+
+### Disabling
+
+Turn off by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS=bullmq`.
+
+### Testing (contributors)
+
+`pnpm test:db` also runs the BullMQ suite against a Redis container. Select the BullMQ version with
+`BULLMQ_VERSION` (default `^6.5.1`), e.g. `BULLMQ_VERSION=5.24.0 pnpm test:db`; `@nestjs/bullmq` follows the Nest
+major.
+
 ## Decorators, `TraceService` and `MetricService`
 
 ```ts
@@ -344,6 +450,8 @@ export class OrdersService {
 | `redact.custom` | none | `(value, path) => value`, runs on every value. |
 | `db.captureParams` | `'error'` | When to record ORM query parameters: `'error'`, `'always'` or `'never'`. |
 | `db.maxParamsBytes` | `2048` | Captured parameters larger than this are truncated. |
+| `bullmq.captureData` | `'error'` | When to record job data on the `process` span: `'error'`, `'always'` or `'never'`. |
+| `bullmq.maxDataBytes` | `8192` | Captured job data larger than this is truncated. |
 
 ## Environment variables
 

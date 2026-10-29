@@ -33,3 +33,9 @@ it('README documents db options', () => {
   for (const key of ['db.captureParams', 'db.maxParamsBytes']) expect(readme).toContain(`\`${key}\``);
   expect(readme).toMatch(/## Databases/);
 });
+
+it('README documents bullmq options', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  for (const key of ['bullmq.captureData', 'bullmq.maxDataBytes']) expect(readme).toContain(`\`${key}\``);
+  expect(readme).toMatch(/## Queues \(BullMQ\)/);
+});
