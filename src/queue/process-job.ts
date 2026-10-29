@@ -1,7 +1,7 @@
-import { type Attributes, context, metrics, type Span, trace } from '@opentelemetry/api';
+import { type Attributes, context, type Span, trace } from '@opentelemetry/api';
 import { errorType, recordError } from '../errors/record';
 import { getDefaultRedactor, serializeBody } from '../redact/redactor';
-import { SCOPE_NAME } from '../shared/constants';
+import { instrumentsPerMeterProvider } from '../shared/instruments';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults } from '../tracing/decorators';
 import { isOwnBullmqTelemetry } from './bullmq-telemetry';
@@ -29,21 +29,18 @@ function controlFlowOutcome(err: unknown): Outcome | undefined {
 export const PROCESS_DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10];
 export const WAIT_TIME_BUCKETS = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 3600];
 
-function instruments() {
-  const meter = metrics.getMeter(SCOPE_NAME);
-  return {
-    completed: meter.createCounter('bullmq.jobs.completed'),
-    failed: meter.createCounter('bullmq.jobs.failed'),
-    duration: meter.createHistogram('messaging.process.duration', {
-      unit: 's',
-      advice: { explicitBucketBoundaries: PROCESS_DURATION_BUCKETS },
-    }),
-    wait: meter.createHistogram('bullmq.job.wait_time', {
-      unit: 's',
-      advice: { explicitBucketBoundaries: WAIT_TIME_BUCKETS },
-    }),
-  };
-}
+const instruments = instrumentsPerMeterProvider((meter) => ({
+  completed: meter.createCounter('bullmq.jobs.completed'),
+  failed: meter.createCounter('bullmq.jobs.failed'),
+  duration: meter.createHistogram('messaging.process.duration', {
+    unit: 's',
+    advice: { explicitBucketBoundaries: PROCESS_DURATION_BUCKETS },
+  }),
+  wait: meter.createHistogram('bullmq.job.wait_time', {
+    unit: 's',
+    advice: { explicitBucketBoundaries: WAIT_TIME_BUCKETS },
+  }),
+}));
 
 function metricsEnabled(worker: any): boolean {
   const t = worker?.opts?.telemetry;

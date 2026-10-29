@@ -1,9 +1,9 @@
-import { type Attributes, context, metrics, type Span, SpanKind } from '@opentelemetry/api';
+import { type Attributes, context, type Span, SpanKind } from '@opentelemetry/api';
 import { classifyError } from '../errors/classify';
 import { errorType } from '../errors/record';
 import { PROCESS_DURATION_BUCKETS } from '../queue/process-job';
 import { getDefaultRedactor, serializeBody } from '../redact/redactor';
-import { SCOPE_NAME } from '../shared/constants';
+import { instrumentsPerMeterProvider } from '../shared/instruments';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults } from '../tracing/decorators';
 import type { CallDescription, WrapOptions } from '../tracing/wrap';
@@ -16,16 +16,13 @@ const PATTERN_HANDLER_METADATA = 'microservices:handler_type';
 /** `PatternHandler.EVENT`; anything else is a message (request/response) handler. */
 const EVENT_HANDLER = 2;
 
-function instruments() {
-  const meter = metrics.getMeter(SCOPE_NAME);
-  return {
-    duration: meter.createHistogram('messaging.process.duration', {
-      unit: 's',
-      advice: { explicitBucketBoundaries: PROCESS_DURATION_BUCKETS },
-    }),
-    errors: meter.createCounter('nestjs.microservice.handler.errors'),
-  };
-}
+const instruments = instrumentsPerMeterProvider((meter) => ({
+  duration: meter.createHistogram('messaging.process.duration', {
+    unit: 's',
+    advice: { explicitBucketBoundaries: PROCESS_DURATION_BUCKETS },
+  }),
+  errors: meter.createCounter('nestjs.microservice.handler.errors'),
+}));
 
 /**
  * The RPC context: the last argument whose class is a known transport context, else the one the
