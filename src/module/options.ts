@@ -17,6 +17,11 @@ export interface OtelModuleOptions {
     include?: (string | RegExp)[];
     /** Class names never wrapped. Wins over `include` and `@Trace()`. */
     exclude?: (string | RegExp)[];
+    /**
+     * Client spans for `ClientProxy.send`/`emit` and W3C context propagation over the TCP and
+     * Redis transports. Default `true`. Handler spans follow `controllers`.
+     */
+    microservices?: boolean;
   };
   errors?: { treat4xxAsError?: boolean };
   capture?: {
@@ -40,6 +45,7 @@ export interface ResolvedOtelOptions {
     filters: boolean;
     include: (string | RegExp)[];
     exclude: (string | RegExp)[];
+    microservices: boolean;
   };
   errors: { treat4xxAsError: boolean };
   capture: {
@@ -82,6 +88,7 @@ export function resolveOptions(o: OtelModuleOptions = {}): ResolvedOtelOptions {
       filters: a.filters ?? false,
       include: a.include ?? [],
       exclude: a.exclude ?? [],
+      microservices: a.microservices ?? true,
     },
     errors: { treat4xxAsError },
     capture: {

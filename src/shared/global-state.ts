@@ -19,6 +19,8 @@ export interface GlobalState {
   bullmqTelemetry?: object;
   /** Raw text → masked replacement, applied by every redactor's `redactString` (see `registerMaskedText`). */
   maskedTexts?: Map<string, string>;
+  /** Set once `@nestjs/microservices` prototypes have been patched (shared by CJS and ESM copies). */
+  microservicesPatched?: boolean;
 }
 
 const STATE_KEY = Symbol.for('@oxth/nestjs-otel.state');

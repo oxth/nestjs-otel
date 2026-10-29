@@ -12,6 +12,7 @@ import { getSdkHandle } from '../bootstrap/sdk';
 import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { OtelLogger } from '../logs/otel-logger';
 import { MetricService } from '../metrics/metric.service';
+import { instrumentMicroservices } from '../microservices/install';
 import { setDbSettings } from '../orm/settings';
 import { setBullmqSettings } from '../queue/settings';
 import { setDefaultRedactor } from '../redact/redactor';
@@ -37,11 +38,13 @@ const REGISTER_MISSING_WARNING =
 const instrumentedProvider: Provider = {
   provide: OTEL_INSTRUMENTED,
   inject: [ModulesContainer, OTEL_OPTIONS],
-  useFactory: (container: ModulesContainer, opts: ResolvedOtelOptions) => {
+  useFactory: async (container: ModulesContainer, opts: ResolvedOtelOptions) => {
     safely('set classify defaults', () => setClassifyDefaults(opts.classify), undefined);
     safely('set default redactor', () => setDefaultRedactor(opts.redactor), undefined);
     safely('set db settings', () => setDbSettings(opts.db), undefined);
     safely('set bullmq settings', () => setBullmqSettings(opts.bullmq), undefined);
+    // Never rejects; patches `@nestjs/microservices` clients/servers before handlers are bound.
+    await instrumentMicroservices(opts);
     return safely('instrument application', () => instrumentApplication(container, opts), { wrapped: [] });
   },
 };

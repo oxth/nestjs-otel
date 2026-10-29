@@ -81,6 +81,7 @@ describe('resolveOptions', () => {
       filters: false,
       include: [],
       exclude: [],
+      microservices: true,
     });
     expect(o.errors).toEqual({ treat4xxAsError: false });
     expect(o.classify).toEqual({ treat4xxAsError: false });
