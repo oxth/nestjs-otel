@@ -1,4 +1,4 @@
-import { type Link, SpanKind, trace } from '@opentelemetry/api';
+import { type Link, ROOT_CONTEXT, SpanKind, trace } from '@opentelemetry/api';
 import { extractContext } from '../propagation/helpers';
 import { safely } from '../shared/safe';
 import type { CallDescription, WrapOptions } from '../tracing/wrap';
@@ -67,7 +67,7 @@ export function describeSqsHandler(owner: object, name: string): Pick<WrapOption
           for (const m of messages) {
             const carrier = carrierOf(m);
             if (!carrier) continue;
-            const sc = trace.getSpanContext(extractContext(carrier));
+            const sc = trace.getSpanContext(extractContext(carrier, ROOT_CONTEXT));
             if (sc && trace.isSpanContextValid(sc)) links.push({ context: sc });
           }
           if (links.length > 0) result.links = links;
@@ -76,7 +76,7 @@ export function describeSqsHandler(owner: object, name: string): Pick<WrapOption
           const message = args[0] as SqsMessage | undefined;
           if (message?.MessageId !== undefined) attributes['messaging.message.id'] = String(message.MessageId);
           const carrier = carrierOf(message);
-          if (carrier) result.parent = extractContext(carrier);
+          if (carrier) result.parent = extractContext(carrier, ROOT_CONTEXT);
           if (message && typeof message === 'object') call.payload = { value: parseBody(message.Body) };
         }
         return result;

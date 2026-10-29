@@ -14,7 +14,7 @@ import {
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { lastValueFrom, type Observable, of } from 'rxjs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { injectContext, type OtelModuleOptions, OtelModule } from '../../src/index';
+import { injectContext, NoTrace, type OtelModuleOptions, OtelModule } from '../../src/index';
 import { describeHandler } from '../../src/microservices/handler';
 import { setupInMemoryTracing } from './helpers/tracing';
 
@@ -369,9 +369,67 @@ describe('@ssut/nestjs-sqs handlers', () => {
     expect(data).toContain('plain boom');
   });
 
+  it('a garbage traceparent in a batch adds no link, even inside an active span', () => {
+    const a = producer();
+    const bad = { traceparent: { DataType: 'String', StringValue: 'garbage' } };
+    const tracer = trace.getTracer('test');
+    tracer.startActiveSpan('ambient', (amb) => {
+      c.handleBatch([
+        { MessageId: '1', Body: '{}', MessageAttributes: a.attrs },
+        { MessageId: '2', Body: '{}', MessageAttributes: bad },
+      ]);
+      amb.end();
+    });
+    const span = byName('SqsConsumer.handleBatch')!;
+    expect(span.links.map((l) => l.context.spanId)).toEqual([a.p.spanContext().spanId]);
+  });
+
   it('metadata survives wrapping', () => {
     const wrapped = SqsConsumer.prototype.handle;
     expect(Reflect.getMetadata(SQS, wrapped)).toEqual({ name: 'orders' });
     expect(Reflect.getMetadata(SQS, SqsConsumer.prototype.handleBatch)).toEqual({ name: 'orders', batch: true });
+  });
+});
+
+describe('SQS handler wrapping rules', () => {
+  @Injectable()
+  class RuleConsumer {
+    @SetMetadata(SQS, { name: 'q' })
+    marked(_m: unknown): void {}
+    unmarked(): void {}
+  }
+  @Injectable()
+  class ExcludedConsumer {
+    @SetMetadata(SQS, { name: 'q' })
+    marked(_m: unknown): void {}
+  }
+  @Injectable()
+  class NoTraceConsumer {
+    @NoTrace()
+    @SetMetadata(SQS, { name: 'q' })
+    marked(_m: unknown): void {}
+  }
+  const get = async <T>(cls: new () => T, o: OtelModuleOptions): Promise<T> =>
+    (await Test.createTestingModule({ imports: [OtelModule.forRoot(o)], providers: [cls] }).compile()).get(cls);
+  beforeEach(() => t.reset());
+
+  it('providers: false still wraps the SQS-marked method only', async () => {
+    const c = await get(RuleConsumer, { autoInstrument: { providers: false } });
+    c.marked({ MessageId: 'x' });
+    c.unmarked();
+    expect(byName('RuleConsumer.marked')?.kind).toBe(SpanKind.CONSUMER);
+    expect(byName('RuleConsumer.unmarked')).toBeUndefined();
+  });
+
+  it('autoInstrument.exclude leaves it unwrapped', async () => {
+    const c = await get(ExcludedConsumer, { autoInstrument: { exclude: ['ExcludedConsumer'] } });
+    c.marked({ MessageId: 'x' });
+    expect(byName('ExcludedConsumer.marked')).toBeUndefined();
+  });
+
+  it('@NoTrace() on the method leaves it unwrapped', async () => {
+    const c = await get(NoTraceConsumer, {});
+    c.marked({ MessageId: 'x' });
+    expect(byName('NoTraceConsumer.marked')).toBeUndefined();
   });
 });
