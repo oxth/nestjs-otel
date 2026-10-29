@@ -19,7 +19,8 @@ import { getClassifyDefaults } from '../tracing/decorators';
 
 /** Structural mirror of BullMQ's `Span` (kept local so published declarations do not depend on `bullmq`). */
 export interface BullmqSpan {
-  setSpanOnContext(ctx: Context): Context;
+  /** BullMQ 5.24 passes `undefined` for a consumer span whose job carries no propagated context. */
+  setSpanOnContext(ctx: Context | undefined): Context;
   setAttribute(key: string, value: unknown): BullmqSpan;
   setAttributes(attributes: Record<string, unknown>): BullmqSpan;
   addEvent(name: string, attributes?: Record<string, unknown>): BullmqSpan;
@@ -86,7 +87,8 @@ function filterAttributes(input: Record<string, unknown> | undefined): Attribute
 }
 
 const noopSpan: BullmqSpan = {
-  setSpanOnContext: (ctx) => safely('bullmq suppress', () => suppressTracing(ctx), ctx),
+  setSpanOnContext: (ctx) =>
+    safely('bullmq suppress', () => suppressTracing(ctx ?? context.active()), ctx ?? ROOT_CONTEXT),
   setAttribute: () => noopSpan,
   setAttributes: () => noopSpan,
   addEvent: () => noopSpan,
@@ -101,8 +103,22 @@ class RecordingSpan implements BullmqSpan {
     private readonly type: 'send' | 'process',
   ) {}
 
-  setSpanOnContext(ctx: Context): Context {
-    return safely('bullmq setSpanOnContext', () => trace.setSpan(ctx, this.span), ctx);
+  /**
+   * The context BullMQ runs the operation's callback in (for `process`, the processor).
+   * - BullMQ 5.24 passes `undefined` for a `process` span without propagated context; the active context is used
+   *   instead, so the processor still runs under the `process` span.
+   * - For `process`, the base is unsuppressed: v6 `Worker.resume()` restarts the main loop inside the
+   *   (suppressed, non-recorded) `resume` operation, and the propagated parent context is built from it.
+   */
+  setSpanOnContext(ctx: Context | undefined): Context {
+    return safely(
+      'bullmq setSpanOnContext',
+      () => {
+        const base = ctx ?? context.active();
+        return trace.setSpan(this.type === 'process' ? unsuppressTracing(base) : base, this.span);
+      },
+      ctx ?? ROOT_CONTEXT,
+    );
   }
 
   setAttribute(key: string, value: unknown): BullmqSpan {
@@ -118,7 +134,8 @@ class RecordingSpan implements BullmqSpan {
           this.span.setAttribute(key, value as AttributeValue);
           switch (key) {
             case 'bullmq.queue.name':
-              if (value !== '') {
+              // BullMQ 5.24 `FlowProducer.addNode` passes the job name here; its span name already has the queue.
+              if (value !== '' && this.operation !== 'addNode') {
                 this.span.updateName(`${this.operation} ${String(value)}`);
                 this.span.setAttribute('messaging.destination.name', value);
               }
@@ -199,6 +216,14 @@ function createTelemetry(): BullmqTelemetry {
               .startSpan(name, { kind: options?.kind }, parent);
             const wrapped = new RecordingSpan(span, operation, type);
             wrapped.init();
+            // BullMQ names `addNode` spans `addNode <queueName>` on every supported version.
+            if (operation === 'addNode' && name.length > operation.length + 1) {
+              safely(
+                'bullmq addNode destination',
+                () => span.setAttribute('messaging.destination.name', name.slice(operation.length + 1)),
+                undefined,
+              );
+            }
             return wrapped;
           },
           noopSpan,

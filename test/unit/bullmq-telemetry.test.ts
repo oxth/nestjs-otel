@@ -124,6 +124,77 @@ describe('bullmq telemetry adapter', () => {
     expect(s.kind).toBe(SpanKind.CONSUMER);
   });
 
+  it('process setSpanOnContext(undefined) runs under the process span (BullMQ 5.24, no metadata)', () => {
+    const span = t().tracer.startSpan('process emails', { kind: 4 });
+    const ctx = span.setSpanOnContext(undefined);
+    const active = t().contextManager.with(ctx, () => trace.getSpan(context.active()));
+    t().contextManager.with(ctx, () => trace.getTracer('x').startSpan('EmailsProcessor.process').end());
+    span.end();
+    const proc = tracing.spans().find((s) => s.name === 'process emails')!;
+    const child = tracing.spans().find((s) => s.name === 'EmailsProcessor.process')!;
+    expect(active?.spanContext().spanId).toBe(proc.spanContext().spanId);
+    expect(child.parentSpanContext?.spanId).toBe(proc.spanContext().spanId);
+  });
+
+  it('process context is unsuppressed even when the parent context is suppressed (v6 resume)', () => {
+    const tr = trace.getTracer('test');
+    let md = '';
+    tr.startActiveSpan('caller', (s) => {
+      md = t().contextManager.getMetadata(context.active());
+      s.end();
+    });
+    tracing.reset();
+    // v6 `Worker.resume()` restarts the main loop inside the non-recorded `resume` operation.
+    const resume = t().tracer.startSpan('resume emails', { kind: 0 });
+    context.with(resume.setSpanOnContext(context.active()), () => {
+      const parent = t().contextManager.fromMetadata(t().contextManager.active(), md);
+      const span = t().tracer.startSpan('process emails', { kind: 4 }, parent);
+      t().contextManager.with(span.setSpanOnContext(parent), () =>
+        trace.getTracer('x').startSpan('EmailsProcessor.process').end(),
+      );
+      span.end();
+    });
+    resume.end();
+    const proc = tracing.spans().find((s) => s.name === 'process emails')!;
+    const child = tracing.spans().find((s) => s.name === 'EmailsProcessor.process');
+    expect(child).toBeDefined();
+    expect(child!.parentSpanContext?.spanId).toBe(proc.spanContext().spanId);
+    expect(tracing.spans().map((s) => s.name).sort()).toEqual(['EmailsProcessor.process', 'process emails']);
+  });
+
+  it('a suppressed input context on a process span still records nested spans', () => {
+    const span = t().tracer.startSpan('process emails', { kind: 4 });
+    t().contextManager.with(span.setSpanOnContext(suppressTracing(ROOT_CONTEXT)), () =>
+      trace.getTracer('x').startSpan('nested').end(),
+    );
+    span.end();
+    const proc = tracing.spans().find((s) => s.name === 'process emails')!;
+    const nested = tracing.spans().find((s) => s.name === 'nested');
+    expect(nested?.parentSpanContext?.spanId).toBe(proc.spanContext().spanId);
+  });
+
+  it('non-process operations still suppress, also with an undefined context', () => {
+    const add = t().tracer.startSpan('add emails', { kind: 3 });
+    t().contextManager.with(add.setSpanOnContext(suppressTracing(ROOT_CONTEXT)), () =>
+      trace.getTracer('x').startSpan('under-suppressed-add').end(),
+    );
+    add.end();
+    const pause = t().tracer.startSpan('pause emails', { kind: 0 });
+    t().contextManager.with(pause.setSpanOnContext(undefined), () => trace.getTracer('x').startSpan('nested').end());
+    pause.end();
+    expect(tracing.spans().map((s) => s.name)).toEqual(['add emails']);
+  });
+
+  it('addNode keeps BullMQ\'s span name and takes the destination from it (5.24 passes the job name)', () => {
+    const span = t().tracer.startSpan('addNode children', { kind: 3 });
+    span.setAttributes({ 'bullmq.queue.name': 'child-job', 'bullmq.queue.operation': 'addNode' });
+    span.end();
+    const [s] = tracing.spans();
+    expect(s.name).toBe('addNode children');
+    expect(s.attributes['messaging.destination.name']).toBe('children');
+    expect(s.attributes['messaging.operation.name']).toBe('addNode');
+  });
+
   it('metadata round trip', () => {
     const tracer = trace.getTracer('test');
     tracer.startActiveSpan('S', (s) => {
