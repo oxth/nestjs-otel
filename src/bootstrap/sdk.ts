@@ -1,6 +1,7 @@
 import { logs, metrics, trace } from '@opentelemetry/api';
 import { setGlobalErrorHandler } from '@opentelemetry/core';
 import { defaultResource, resourceFromAttributes } from '@opentelemetry/resources';
+import type { Instrumentation } from '@opentelemetry/instrumentation';
 import { NodeSDK, type NodeSDKConfiguration } from '@opentelemetry/sdk-node';
 import { getGlobalState, type SdkHandle } from '../shared/global-state';
 import { safely } from '../shared/safe';
@@ -16,6 +17,8 @@ export interface SdkOverrides {
   spanProcessors?: SpanProcessor[];
   metricReaders?: MetricReader[];
   logRecordProcessors?: LogRecordProcessor[];
+  /** Prebuilt instrumentations (register builds them first to configure the ESM hook). */
+  instrumentations?: Instrumentation[];
 }
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
@@ -38,8 +41,9 @@ export function startSdk(cfg: BootstrapConfig, overrides: SdkOverrides = {}): Sd
       installErrorHandler();
       const sdk = new NodeSDK({
         resource: defaultResource().merge(resourceFromAttributes(buildResourceAttributes(process.env, process.cwd()))),
-        instrumentations: buildInstrumentations(cfg),
         ...overrides,
+        // Built once: constructing an instrumentation enables it (and patches its module).
+        instrumentations: overrides.instrumentations ?? buildInstrumentations(cfg),
       });
       sdk.start();
       const handle = createHandle(sdk);

@@ -673,6 +673,10 @@ stderr as `@oxth/nestjs-otel: telemetry export error: ...`.
   longer produces a core dump, and the printed error lacks Node's source-line context (the `file:line` excerpt
   with a caret above the stack).
 - **One Nest app per process** is the supported setup; options are process-global.
+- **ESM loader hook**: `register` only intercepts ESM imports of the packages its own instrumentations hook (`http`,
+  `express`, `pg`, `bullmq`, …). An extra instrumentation you register yourself works for CommonJS `require()`, but
+  won't see ESM imports of its package. Wrapping every module is avoided because it crashes CommonJS apps that load
+  Nest 12 on Node 22.
 - **Overhead**: `pnpm bench` measures p99 latency of the e2e fixture with and without the library (a tracked goal,
   not a gate; CI posts the result to the job summary).
 

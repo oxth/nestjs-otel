@@ -1,6 +1,8 @@
 import { register as registerHooks } from 'node:module';
 import { pathToFileURL } from 'node:url';
 import { readBootstrapConfig } from './bootstrap/config';
+import { esmHookIncludeList } from './bootstrap/esm-hook';
+import { buildInstrumentations } from './bootstrap/instrumentations';
 import { installProcessErrorMonitor } from './bootstrap/process-errors';
 import { startSdk } from './bootstrap/sdk';
 import { getGlobalState } from './shared/global-state';
@@ -26,12 +28,24 @@ safely(
     const state = getGlobalState();
     if (state.registered) return;
     state.registered = true;
-    // The ESM loader hook is needed in the CJS build too: a CJS app still loads ESM-only
-    // packages (Nest 12, and express through it) via the ESM loader.
-    const parentURL = __OXTH_FORMAT__ === 'esm' ? import.meta.url : pathToFileURL(__filename).href;
-    safely('register esm loader hook', () => registerHooks('@opentelemetry/instrumentation/hook.mjs', parentURL), undefined);
-    if (__OXTH_FORMAT__ === 'cjs') warnIfLoadedLate();
-    startSdk(readBootstrapConfig(process.env));
+    const cfg = readBootstrapConfig(process.env);
+    if (!cfg.disabled) {
+      const instrumentations = safely('build instrumentations', () => buildInstrumentations(cfg), []);
+      // The ESM loader hook is needed in the CJS build too: a CJS app still loads ESM-only
+      // packages (Nest 12, and express through it) via the ESM loader. It only intercepts the
+      // modules the instrumentations hook (see esmHookIncludeList).
+      const parentURL = __OXTH_FORMAT__ === 'esm' ? import.meta.url : pathToFileURL(__filename).href;
+      const include = esmHookIncludeList(instrumentations);
+      safely(
+        'register esm loader hook',
+        () => registerHooks('@opentelemetry/instrumentation/hook.mjs', parentURL, { data: { include } }),
+        undefined,
+      );
+      if (__OXTH_FORMAT__ === 'cjs') warnIfLoadedLate();
+      startSdk(cfg, { instrumentations });
+    } else if (__OXTH_FORMAT__ === 'cjs') {
+      warnIfLoadedLate();
+    }
     installProcessErrorMonitor();
   },
   undefined,
