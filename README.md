@@ -478,7 +478,7 @@ Handled by this library:
 | Variable | Purpose |
 | --- | --- |
 | `OTEL_SDK_DISABLED=true` | Do not start the SDK. `OtelModule` stays harmless. |
-| `OTEL_NODE_ENABLED_INSTRUMENTATIONS` | Comma list; only these of `http`, `express`, `fastify`, `pino`, `runtime-node`, `pg`, `mysql2`, `mongodb`, `typeorm`, `mikro-orm`. |
+| `OTEL_NODE_ENABLED_INSTRUMENTATIONS` | Comma list; only these of `http`, `express`, `fastify`, `pino`, `runtime-node`, `pg`, `mysql2`, `mongodb`, `typeorm`, `mikro-orm`, `bullmq`, `kafkajs`, `amqplib`, `ioredis`, `redis`, `aws-sdk`. |
 | `OTEL_NODE_DISABLED_INSTRUMENTATIONS` | Comma list of the same names to turn off. |
 
 `service.version` is read from `package.json` and `deployment.environment.name` from `NODE_ENV`, unless set in

@@ -53,6 +53,40 @@ describe('buildInstrumentations', () => {
   const find = (name: string, pkgs: string[]) =>
     buildInstrumentations(readBootstrapConfig({}), (p) => pkgs.includes(p)).find((i) => i.instrumentationName === name)!;
 
+  const transports: Array<[string, string, string]> = [
+    ['kafkajs', 'kafkajs', 'instrumentation-kafkajs'],
+    ['amqplib', 'amqplib', 'instrumentation-amqplib'],
+    ['ioredis', 'ioredis', 'instrumentation-ioredis'],
+    ['redis', 'redis', 'instrumentation-redis'],
+    ['aws-sdk', '@aws-sdk/client-sqs', 'instrumentation-aws-sdk'],
+  ];
+
+  it.each(transports)('%s entry is included when installed and can be disabled', (name, pkg, otelName) => {
+    expect(names(readBootstrapConfig({}), [pkg])).toContain(`@opentelemetry/${otelName}`);
+    expect(names(readBootstrapConfig({}), [])).not.toContain(`@opentelemetry/${otelName}`);
+    const cfg = readBootstrapConfig({ OTEL_NODE_DISABLED_INSTRUMENTATIONS: name });
+    expect(names(cfg, [pkg])).not.toContain(`@opentelemetry/${otelName}`);
+  });
+
+  it.each([
+    ['ioredis', 'ioredis', 'instrumentation-ioredis'],
+    ['redis', 'redis', 'instrumentation-redis'],
+  ])('%s defaults: parent span required and statement is the command name only', (_n, pkg, otelName) => {
+    const cfg = find(`@opentelemetry/${otelName}`, [pkg]).getConfig() as {
+      requireParentSpan?: boolean;
+      dbStatementSerializer?: (c: string, a: unknown[]) => string;
+    };
+    expect(cfg.requireParentSpan).toBe(true);
+    expect(cfg.dbStatementSerializer!('set', ['user:1', 'hunter2'])).toBe('set');
+  });
+
+  it('aws-sdk does not extract context from SQS payloads', () => {
+    const cfg = find('@opentelemetry/instrumentation-aws-sdk', ['@aws-sdk/client-sqs']).getConfig() as {
+      sqsExtractContextPropagationFromPayload?: boolean;
+    };
+    expect(cfg.sqsExtractContextPropagationFromPayload).toBe(false);
+  });
+
   it('mikro-orm entry enabled when @mikro-orm/core installed', () => {
     expect(names(readBootstrapConfig({}), ['@mikro-orm/core'])).toContain('@oxth/nestjs-otel/instrumentation-mikro-orm');
   });

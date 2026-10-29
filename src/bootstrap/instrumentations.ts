@@ -2,11 +2,16 @@ import { IncomingMessage } from 'node:http';
 import { FastifyOtelInstrumentation } from '@fastify/otel';
 import type { Instrumentation } from '@opentelemetry/instrumentation';
 import { ExpressInstrumentation } from '@opentelemetry/instrumentation-express';
+import { AmqplibInstrumentation } from '@opentelemetry/instrumentation-amqplib';
+import { AwsInstrumentation } from '@opentelemetry/instrumentation-aws-sdk';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
+import { IORedisInstrumentation } from '@opentelemetry/instrumentation-ioredis';
+import { KafkaJsInstrumentation } from '@opentelemetry/instrumentation-kafkajs';
 import { MongoDBInstrumentation } from '@opentelemetry/instrumentation-mongodb';
 import { MySQL2Instrumentation } from '@opentelemetry/instrumentation-mysql2';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
+import { RedisInstrumentation } from '@opentelemetry/instrumentation-redis';
 import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
 import { MikroOrmInstrumentation } from '../orm/mikro-orm';
 import { BullmqInstrumentation } from '../queue/bullmq';
@@ -85,6 +90,24 @@ export const INSTRUMENTATIONS: InstrumentationEntry[] = [
   { name: 'typeorm', pkg: 'typeorm', create: () => new TypeormInstrumentation() },
   { name: 'mikro-orm', pkg: '@mikro-orm/core', create: () => new MikroOrmInstrumentation() },
   { name: 'bullmq', pkg: 'bullmq', create: () => new BullmqInstrumentation() },
+  { name: 'kafkajs', pkg: 'kafkajs', create: () => new KafkaJsInstrumentation() },
+  { name: 'amqplib', pkg: 'amqplib', create: () => new AmqplibInstrumentation() },
+  {
+    name: 'ioredis',
+    pkg: 'ioredis',
+    // Command name only: keys and values never reach the span.
+    create: () => new IORedisInstrumentation({ requireParentSpan: true, dbStatementSerializer: (cmd) => cmd }),
+  },
+  {
+    name: 'redis',
+    pkg: 'redis',
+    create: () => new RedisInstrumentation({ requireParentSpan: true, dbStatementSerializer: (cmd) => cmd }),
+  },
+  {
+    name: 'aws-sdk',
+    pkg: '@aws-sdk/client-sqs',
+    create: () => new AwsInstrumentation({ sqsExtractContextPropagationFromPayload: false }),
+  },
 ];
 
 export function buildInstrumentations(
