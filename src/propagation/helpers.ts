@@ -1,11 +1,11 @@
 import { type Context, context, defaultTextMapSetter, propagation } from '@opentelemetry/api';
 import { safely } from '../shared/safe';
 
-/** Writes the W3C trace context of `ctx` (default: active) into `carrier`. Never throws. */
-export function injectContext(
-  carrier: Record<string, unknown>,
-  ctx: Context = context.active(),
-): Record<string, unknown> {
+/**
+ * Writes the trace context of `ctx` (default: active) into `carrier` with the global propagator
+ * (W3C unless `OTEL_PROPAGATORS` says otherwise) and returns `carrier`. Never throws.
+ */
+export function injectContext<T extends Record<string, unknown>>(carrier: T, ctx: Context = context.active()): T {
   return safely(
     'injectContext',
     () => {
