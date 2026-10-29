@@ -106,6 +106,16 @@ describe('bullmq telemetry adapter', () => {
     },
   );
 
+  it('process without propagated context is a root even under an active span', () => {
+    const tr = trace.getTracer('x');
+    tr.startActiveSpan('boot', (boot) => {
+      t().tracer.startSpan('process emails', { kind: 4 }).end();
+      boot.end();
+    });
+    const proc = tracing.spans().find((s) => s.name === 'process emails')!;
+    expect(proc.parentSpanContext).toBeUndefined();
+  });
+
   it('process starts unsuppressed', () => {
     const span = t().tracer.startSpan('process emails', { kind: 4 }, suppressTracing(context.active()));
     span.end();

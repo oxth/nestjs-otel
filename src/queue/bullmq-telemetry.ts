@@ -190,7 +190,9 @@ function createTelemetry(): BullmqTelemetry {
             const operation = name.split(' ')[0] ?? name;
             const type = RECORDED_OPERATIONS.get(operation);
             if (!type) return noopSpan;
-            let parent = ctx ?? context.active();
+            // A `process` span without propagated context is a trace root: BullMQ's main worker loop is
+            // not detached, so the active context may be whatever span the worker was created under.
+            let parent = ctx ?? (type === 'process' ? ROOT_CONTEXT : context.active());
             if (type === 'process') parent = unsuppressTracing(parent);
             const span = trace
               .getTracer(SCOPE_NAME, PACKAGE_VERSION)
