@@ -269,8 +269,8 @@ allow-list with `OTEL_NODE_ENABLED_INSTRUMENTATIONS`.
 
 ### Testing (contributors)
 
-`pnpm test:db` runs the Docker suite (databases and BullMQ) against real containers (testcontainers: Postgres, MySQL,
-MongoDB, Redis), so it needs Docker. Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure
+`pnpm test:db` runs the Docker suite (databases, BullMQ and microservice transports) against real containers (testcontainers:
+Postgres, MySQL, MongoDB, Redis, Kafka, RabbitMQ, ElasticMQ for SQS), so it needs Docker. Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure
 (CI sets it). Select versions with `NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`), `MIKRO_VERSION`
 (default `^7`) and `BULLMQ_VERSION` (default `^6.5.1`; `@nestjs/bullmq` follows the Nest major), e.g.
 `NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 BULLMQ_VERSION=5.24.0 pnpm test:db`. `BULLMQ_VERSION`
@@ -368,7 +368,7 @@ Meter `@oxth/nestjs-otel`, attributes `messaging.system`, `messaging.destination
 | --- | --- | --- |
 | `bullmq.jobs.completed` | counter | Completed attempts. |
 | `bullmq.jobs.failed` | counter | Failed attempts, with `bullmq.job.will_retry`. |
-| `messaging.process.duration` | histogram, `s` | Processor time; `error.type` on failure. |
+| `messaging.process.duration` | histogram, `s` | Processor time; `error.type` (the error's constructor name) on failure. |
 | `bullmq.job.wait_time` | histogram, `s` | Enqueue (plus delay) to start; first attempt only. |
 
 Both histograms use second-based bucket boundaries (`messaging.process.duration` from 5 ms to 10 s,
@@ -386,6 +386,143 @@ Turn off by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS=bullmq`.
 Disabling the instrumentation at runtime (`instrumentation.disable()`) affects only new `Queue`, `Worker` and
 `FlowProducer` instances. A `Queue` or `Worker` that has already run an operation keeps the telemetry stored in its
 options and keeps recording (an existing `FlowProducer` without its own `telemetry` stops being traced).
+
+## Microservices
+
+With `@nestjs/microservices` installed, `OtelModule` traces clients and handlers, and the trace continues from the
+caller into the service that handles the message. Context travels over TCP, Redis, Kafka, RabbitMQ and SQS.
+
+Supported: `@nestjs/microservices` `^11 || ^12` (optional peer dependency) and `@ssut/nestjs-sqs` `>=3 <4`. NATS,
+MQTT and gRPC get the client span and the handler span, but no context propagation (see
+[Limits](#limits-microservices)).
+
+### What a trace looks like
+
+```
+POST /orders
+└─ OrdersController.create
+   └─ send order.create                (client span, CLIENT)
+      └─ OrdersHandler.create          (handler span, SERVER)
+         └─ emit order.created         (client span, PRODUCER)
+            └─ AuditHandler.onCreated  (handler span, CONSUMER)
+```
+
+- **Client spans** are `send ${pattern}` (kind CLIENT) for `send()` and `emit ${pattern}` (kind PRODUCER) for
+  `emit()`, with `messaging.system`, `messaging.destination.name` (the pattern), `messaging.operation.type = send`
+  and `nestjs.microservice.kind` (`message` or `event`). A `send()` span starts when the Observable is subscribed,
+  but its parent is the span that was active when `send()` was called, so `firstValueFrom` inside another async
+  step still parents correctly. It ends on complete, error or unsubscribe. An `emit()` span starts at the call.
+  A non-string pattern is `JSON.stringify`ed with its keys sorted.
+- **Handler spans** are the usual `Class.method` span, with kind SERVER for `@MessagePattern` and CONSUMER for
+  `@EventPattern`. They follow `autoInstrument.controllers`.
+- `messaging.system` is `tcp`, `redis`, `kafka`, `rabbitmq`, `nats`, `mqtt`, `grpc`, `aws_sqs`, or `nestjs` for
+  a custom transport.
+
+### Context propagation
+
+| Transport | Carrier | Done by |
+| --- | --- | --- |
+| TCP, Redis | Top-level keys of the packet's `metadata` (`traceparent`, `tracestate`, `baggage`) | This library |
+| Kafka | Message headers | `kafkajs` instrumentation |
+| RabbitMQ | Message headers | `amqplib` instrumentation |
+| SQS | Message attributes | `aws-sdk` instrumentation |
+
+On TCP and Redis the carrier is added to `packet.metadata` only; `pattern` and `data` are never touched, so an
+unpatched Nest service receives exactly the data you sent. Nest 12 services see the keys in `ctx.getMetadata()`;
+Nest 11 ignores them. An unpatched client talking to a patched server just starts a new trace. If your app already
+sets `metadata` through Nest 12's dispatch hook, its values are kept and the trace keys are added without
+overwriting.
+
+On Redis the server only parses a message early when it contains `traceparent`, so untraced traffic costs nothing.
+
+On Kafka, the library's client span and the kafkajs producer span share the name `send <topic>` (the library's is
+kind CLIENT, kafkajs's is PRODUCER).
+
+### Handler span attributes
+
+`messaging.system`, `messaging.destination.name` (the topic on Kafka, otherwise the pattern),
+`messaging.operation.type = process`, `nestjs.microservice.kind`, `nestjs.microservice.pattern`.
+
+Handler spans get their transport and pattern even without `@Ctx()`: the library hooks `Server#addHandler` to learn
+the RPC context.
+
+SQS handlers (`@SqsMessageHandler`) are CONSUMER spans with `messaging.system = aws_sqs`,
+`messaging.destination.name` (the consumer `name`), `messaging.operation.type = process` and
+`messaging.message.id`. The parent comes from the message attributes; a message without trace attributes starts its
+own trace. SQS handler methods are traced even when `autoInstrument.providers` is `false`, because they are entry
+points; `@NoTrace()` and `autoInstrument.exclude` still apply. A batch handler (`batch: true`) has no parent
+and instead one span link per message that carries context, plus `messaging.batch.message_count`.
+
+`@ssut/nestjs-sqs` 3.x declares Nest 11 or lower as its peers. On Nest 12 the install prints a peer warning, but it
+works.
+
+### Payload capture and masking
+
+`microservices.captureData` decides when the payload is recorded on the handler span as `nestjs.microservice.data`:
+`'error'` (default, only when the handler fails), `'always'` or `'never'`. `microservices.maxDataBytes` (default
+`8192`) caps the serialized size; longer values are truncated and `nestjs.microservice.data.truncated` is set. Data
+goes through the same redactor as bodies (see [Errors and redaction](#errors-and-redaction)), so a `password`
+becomes `[REDACTED]`.
+
+```ts
+OtelModule.forRoot({ microservices: { captureData: 'error', maxDataBytes: 8192 } });
+```
+
+The payload is the handler's first argument, after pipes (for example a validated DTO). With the order
+`(@Ctx() ctx, @Payload() data)` nothing is captured. For SQS it is the message `Body` (parsed when it is JSON).
+Responses are never recorded.
+
+### Metrics
+
+Meter `@oxth/nestjs-otel`, for pattern handlers and SQS handlers, with attributes `messaging.system`,
+`messaging.destination.name` and `messaging.operation.name`:
+
+| Metric | Type | Notes |
+| --- | --- | --- |
+| `messaging.process.duration` | histogram, `s` | Handler time; `error.type` (the error's constructor name, for example `RpcException`) on failure. |
+| `nestjs.microservice.handler.errors` | counter | Failed handlers, with `error.type`. |
+
+### Redis command spans
+
+`ioredis` and `redis` are instrumented with two defaults: spans are created only inside an existing trace
+(`requireParentSpan`), and the statement is the command name only, never keys or values. An idle Redis transport
+server or BullMQ worker therefore records no spans.
+
+### Manual helpers
+
+For a transport the library doesn't know, propagate the context yourself. The helpers are exported from the package
+root and never throw: invalid input returns the carrier unchanged, or the base (default: active) context.
+
+```ts
+import { extractContext, injectContext, withContext } from '@oxth/nestjs-otel';
+
+// Producer: write the active trace context into your message headers.
+const headers = injectContext({});
+await broker.publish(topic, body, headers);
+
+// Consumer: run the handler inside the sender's trace.
+broker.subscribe(topic, (msg) => withContext(extractContext(msg.headers), () => handle(msg)));
+```
+
+### Shutdown
+
+Call `app.enableShutdownHooks()` in microservices. Without it, the library flushes and exits on SIGTERM itself, so
+Nest never closes its transports, and Kafka consumers do not leave their group cleanly.
+
+### Disabling
+
+- `autoInstrument.microservices: false` turns off the client, server and `metadata` patches. Handler spans still
+  follow `autoInstrument.controllers`.
+- Turn off an instrumentation by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS`: `kafkajs`, `amqplib`, `ioredis`,
+  `redis` or `aws-sdk`.
+
+### Limits (microservices)
+
+- NATS, MQTT and gRPC get no propagation: each message starts a new trace.
+- RabbitMQ through `amqp-connection-manager`: messages published while the channel's send queue is busy are sent
+  later from its worker loop, so their publish span may lose its parent.
+- SQS batch handlers use links, not a parent.
+- If an app's `packet.metadata` is not a plain object, nothing is injected into that packet.
 
 ## Decorators, `TraceService` and `MetricService`
 
@@ -459,6 +596,9 @@ export class OrdersService {
 | `db.maxParamsBytes` | `2048` | Captured parameters larger than this are truncated. |
 | `bullmq.captureData` | `'error'` | When to record job data on the `process` span: `'error'`, `'always'` or `'never'`. |
 | `bullmq.maxDataBytes` | `8192` | Captured job data larger than this is truncated. |
+| `autoInstrument.microservices` | `true` | Client, server and `metadata` patches for `@nestjs/microservices`. Handler spans follow `autoInstrument.controllers`. |
+| `microservices.captureData` | `'error'` | When to record the handler payload: `'error'`, `'always'` or `'never'`. |
+| `microservices.maxDataBytes` | `8192` | Captured payloads larger than this are truncated. |
 
 ## Environment variables
 

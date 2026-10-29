@@ -39,3 +39,10 @@ it('README documents bullmq options', () => {
   for (const key of ['bullmq.captureData', 'bullmq.maxDataBytes']) expect(readme).toContain(`\`${key}\``);
   expect(readme).toMatch(/## Queues \(BullMQ\)/);
 });
+
+it('README documents microservices options', () => {
+  const readme = readFileSync('README.md', 'utf8');
+  for (const key of ['autoInstrument.microservices', 'microservices.captureData', 'microservices.maxDataBytes'])
+    expect(readme).toContain(`\`${key}\``);
+  expect(readme).toMatch(/## Microservices/);
+});
