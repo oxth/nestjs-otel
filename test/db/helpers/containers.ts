@@ -45,7 +45,8 @@ function mysql(): Promise<StartedTestContainer> {
 }
 
 function mongo(): Promise<StartedTestContainer> {
-  return new GenericContainer('mongo:8')
+  // Mongo 8 refuses to start on Linux 6.19+ kernels (GitHub runners): SERVER-121912.
+  return new GenericContainer('mongo:7')
     .withExposedPorts(27017)
     .withWaitStrategy(Wait.forLogMessage(/Waiting for connections/))
     .start();
@@ -82,7 +83,7 @@ function elasticmq(): Promise<StartedTestContainer> {
 }
 
 /**
- * Starts Postgres 17, MySQL 8.4, Mongo 8, Redis 8, Kafka (KRaft), RabbitMQ 4 and ElasticMQ (SQS) in
+ * Starts Postgres 17, MySQL 8.4, Mongo 7, Redis 8, Kafka (KRaft), RabbitMQ 4 and ElasticMQ (SQS) in
  * parallel.
  */
 export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<void> }> {
