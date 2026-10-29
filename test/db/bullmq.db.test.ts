@@ -151,8 +151,10 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
 
   it('idle worker records no spans', async () => {
     const q = qname();
-    worker(q, async () => 'ok');
-    await new Promise((r) => setTimeout(r, 2000));
+    const w = worker(q, async () => 'ok');
+    await w.waitUntilReady();
+    // Long enough for several polls and at least two stalled-job checks (stalledInterval is 500ms).
+    await new Promise((r) => setTimeout(r, 2 * 500 + 1000));
     expect(t.spans()).toEqual([]);
   });
 
@@ -181,7 +183,9 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     }
     expect(dump(t.spans())).not.toContain(SECRET);
     const failed = await collect('bullmq.jobs.failed');
-    const total = (failed?.dataPoints ?? []).reduce((sum, d) => sum + (d.value as number), 0);
+    const total = (failed?.dataPoints ?? [])
+      .filter((d) => d.attributes['messaging.destination.name'] === q)
+      .reduce((sum, d) => sum + (d.value as number), 0);
     expect(total).toBe(2);
   });
 
@@ -234,18 +238,17 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
   it('worker created inside a span does not adopt it', async () => {
     const q = qname();
     const queueI = queue(q);
-    let boot!: ReadableSpan;
     await tracer().startActiveSpan('boot', async (span) => {
       worker(q, async () => 'ok');
       span.end();
     });
     await new Promise((r) => setTimeout(r, 100));
-    await queueI.add('send', {});
+    // No propagated context: the only way `process` could get a parent is the worker's creation context.
+    await queueI.add('send', {}, { telemetry: { omitContext: true } });
     const spans = await waitForSpans((s) => s.some((x) => x.name === `process ${q}`));
-    boot = spans.find((s) => s.name === 'boot')!;
-    const add = spans.find((s) => s.name === `add ${q}`)!;
+    const boot = spans.find((s) => s.name === 'boot')!;
     const proc = spans.find((s) => s.name === `process ${q}`)!;
-    expect(parentId(proc)).toBe(add.spanContext().spanId);
+    expect(parentId(proc)).toBeUndefined();
     expect(proc.spanContext().traceId).not.toBe(boot.spanContext().traceId);
   });
 
