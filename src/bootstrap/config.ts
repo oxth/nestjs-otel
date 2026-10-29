@@ -1,4 +1,4 @@
-export type InstrumentationName = 'http' | 'express' | 'fastify' | 'pino' | 'runtime-node' | 'pg' | 'mysql2' | 'mongodb' | 'typeorm' | 'mikro-orm';
+export type InstrumentationName = 'http' | 'express' | 'fastify' | 'pino' | 'runtime-node' | 'pg' | 'mysql2' | 'mongodb' | 'typeorm' | 'mikro-orm' | 'bullmq';
 
 export interface BootstrapConfig {
   /** `OTEL_SDK_DISABLED === 'true'` */

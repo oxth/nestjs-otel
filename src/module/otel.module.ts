@@ -13,6 +13,7 @@ import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { OtelLogger } from '../logs/otel-logger';
 import { MetricService } from '../metrics/metric.service';
 import { setDbSettings } from '../orm/settings';
+import { setBullmqSettings } from '../queue/settings';
 import { setDefaultRedactor } from '../redact/redactor';
 import { getGlobalState } from '../shared/global-state';
 import { safely } from '../shared/safe';
@@ -40,6 +41,7 @@ const instrumentedProvider: Provider = {
     safely('set classify defaults', () => setClassifyDefaults(opts.classify), undefined);
     safely('set default redactor', () => setDefaultRedactor(opts.redactor), undefined);
     safely('set db settings', () => setDbSettings(opts.db), undefined);
+    safely('set bullmq settings', () => setBullmqSettings(opts.bullmq), undefined);
     return safely('instrument application', () => instrumentApplication(container, opts), { wrapped: [] });
   },
 };

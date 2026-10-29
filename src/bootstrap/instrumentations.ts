@@ -9,6 +9,7 @@ import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
 import { PinoInstrumentation } from '@opentelemetry/instrumentation-pino';
 import { RuntimeNodeInstrumentation } from '@opentelemetry/instrumentation-runtime-node';
 import { MikroOrmInstrumentation } from '../orm/mikro-orm';
+import { BullmqInstrumentation } from '../queue/bullmq';
 import { TypeormInstrumentation } from '../orm/typeorm';
 import { DEFAULT_QUERY_PARAMS } from '../redact/defaults';
 import { maskSqlLiterals } from '../redact/sql-mask';
@@ -83,6 +84,7 @@ export const INSTRUMENTATIONS: InstrumentationEntry[] = [
   { name: 'mongodb', pkg: 'mongodb', create: () => new MongoDBInstrumentation({ enhancedDatabaseReporting: false }) },
   { name: 'typeorm', pkg: 'typeorm', create: () => new TypeormInstrumentation() },
   { name: 'mikro-orm', pkg: '@mikro-orm/core', create: () => new MikroOrmInstrumentation() },
+  { name: 'bullmq', pkg: 'bullmq', create: () => new BullmqInstrumentation() },
 ];
 
 export function buildInstrumentations(

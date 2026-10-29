@@ -43,6 +43,13 @@ describe('buildInstrumentations', () => {
     expect(result.some((x) => x.includes('mikro'))).toBe(false);
   });
 
+  it('bullmq entry included when installed and can be disabled', () => {
+    expect(names(readBootstrapConfig({}), ['bullmq'])).toContain('@oxth/nestjs-otel/instrumentation-bullmq');
+    expect(names(readBootstrapConfig({}), [])).not.toContain('@oxth/nestjs-otel/instrumentation-bullmq');
+    const cfg = readBootstrapConfig({ OTEL_NODE_DISABLED_INSTRUMENTATIONS: 'bullmq' });
+    expect(names(cfg, ['bullmq'])).not.toContain('@oxth/nestjs-otel/instrumentation-bullmq');
+  });
+
   const find = (name: string, pkgs: string[]) =>
     buildInstrumentations(readBootstrapConfig({}), (p) => pkgs.includes(p)).find((i) => i.instrumentationName === name)!;
 

@@ -4,6 +4,7 @@ export interface SdkHandle {
 }
 
 import type { DbSettings } from '../orm/settings';
+import type { BullmqSettings } from '../queue/settings';
 import type { Redactor } from '../redact/redactor';
 
 export interface GlobalState {
@@ -13,6 +14,7 @@ export interface GlobalState {
   warned: Set<string>;
   redactor?: Redactor;
   db?: DbSettings;
+  bullmq?: BullmqSettings;
   /** The BullMQ telemetry adapter singleton (shared by CJS and ESM copies). */
   bullmqTelemetry?: object;
   /** Raw text → masked replacement, applied by every redactor's `redactString` (see `registerMaskedText`). */

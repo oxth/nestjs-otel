@@ -4,6 +4,7 @@ export { NoCaptureBody } from './http/no-capture-body.decorator';
 export { OtelModule } from './module/otel.module';
 export type { OtelModuleAsyncOptions, OtelModuleOptions } from './module/options';
 export type { DbCaptureMode, DbOptions } from './orm/settings';
+export type { BullmqOptions, JobDataCaptureMode } from './queue/settings';
 export type { RedactOptions } from './redact/redactor';
 export { OtelLogger, type OtelLoggerOptions } from './logs/otel-logger';
 export { MetricService } from './metrics/metric.service';
