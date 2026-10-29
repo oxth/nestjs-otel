@@ -392,9 +392,10 @@ options and keeps recording (an existing `FlowProducer` without its own `telemet
 With `@nestjs/microservices` installed, `OtelModule` traces clients and handlers, and the trace continues from the
 caller into the service that handles the message. Context travels over TCP, Redis, Kafka, RabbitMQ and SQS.
 
-Supported: `@nestjs/microservices` `^11 || ^12` (optional peer dependency) and `@ssut/nestjs-sqs` `>=3 <4`. NATS,
-MQTT and gRPC get the client span and the handler span, but no context propagation (see
-[Limits](#limits-microservices)).
+Supported: `@nestjs/microservices` `^11 || ^12` (optional peer dependency) and `@ssut/nestjs-sqs` `>=3 <4`. NATS
+and MQTT get the client span and the handler span, but no context propagation. gRPC gets only the handler span,
+with `messaging.system = nestjs`: gRPC calls go through `ClientGrpc.getService()`, not `send()`/`emit()`, so there
+is no client span (see [Limits](#limits-microservices)).
 
 ### What a trace looks like
 
@@ -411,21 +412,32 @@ POST /orders
   `emit()`, with `messaging.system`, `messaging.destination.name` (the pattern), `messaging.operation.type = send`
   and `nestjs.microservice.kind` (`message` or `event`). A `send()` span starts when the Observable is subscribed,
   but its parent is the span that was active when `send()` was called, so `firstValueFrom` inside another async
-  step still parents correctly. It ends on complete, error or unsubscribe. An `emit()` span starts at the call.
-  A non-string pattern is `JSON.stringify`ed with its keys sorted.
+  step still parents correctly. Your `next`, `error` and `complete` callbacks also run in that caller context, so
+  spans you start there join the caller's trace. The span ends on complete, error or unsubscribe; when it is torn
+  down before the reply (an `unsubscribe()`, or `timeout()` firing), it gets `nestjs.microservice.cancelled = true`.
+  An `emit()` span starts at the call. A non-string pattern is `JSON.stringify`ed with its keys sorted; a RegExp
+  pattern (Kafka) is its literal, for example `/orders\..*/`.
 - **Handler spans** are the usual `Class.method` span, with kind SERVER for `@MessagePattern` and CONSUMER for
   `@EventPattern`. They follow `autoInstrument.controllers`.
-- `messaging.system` is `tcp`, `redis`, `kafka`, `rabbitmq`, `nats`, `mqtt`, `grpc`, `aws_sqs`, or `nestjs` for
-  a custom transport.
+- `messaging.system` is `tcp`, `redis`, `kafka`, `rabbitmq`, `nats`, `mqtt`, `aws_sqs`, or `nestjs` for a custom
+  transport and for gRPC handlers. Subclasses of the Nest clients and contexts (`class MyKafka extends ClientKafka`)
+  map like their base class.
 
 ### Context propagation
 
 | Transport | Carrier | Done by |
 | --- | --- | --- |
-| TCP, Redis | Top-level keys of the packet's `metadata` (`traceparent`, `tracestate`, `baggage`) | This library |
+| TCP, Redis | Top-level keys of the packet's `metadata` (`traceparent`, `tracestate`, `baggage` by default) | This library |
 | Kafka | Message headers | `kafkajs` instrumentation |
 | RabbitMQ | Message headers | `amqplib` instrumentation |
 | SQS | Message attributes | `aws-sdk` instrumentation |
+
+The keys are the fields of the global propagator: W3C (`traceparent`, `tracestate`, `baggage`) by default, or what
+`OTEL_PROPAGATORS` selects (for example the `b3` headers). TCP, Redis and SQS handlers read the same fields.
+
+The `aws-sdk` instrumentation is turned on only when `@aws-sdk/client-sqs` is installed. It then traces every AWS
+SDK v3 client in the process (S3, DynamoDB and so on), not only SQS; turn it off with
+`OTEL_NODE_DISABLED_INSTRUMENTATIONS=aws-sdk` if you don't want that.
 
 On TCP and Redis the carrier is added to `packet.metadata` only; `pattern` and `data` are never touched, so an
 unpatched Nest service receives exactly the data you sent. Nest 12 services see the keys in `ctx.getMetadata()`;
@@ -433,7 +445,8 @@ Nest 11 ignores them. An unpatched client talking to a patched server just start
 sets `metadata` through Nest 12's dispatch hook, its values are kept and the trace keys are added without
 overwriting.
 
-On Redis the server only parses a message early when it contains `traceparent`, so untraced traffic costs nothing.
+On Redis the server only parses a message early when its text contains one of the propagator's fields (for W3C,
+`traceparent`), so untraced traffic costs nothing.
 
 On Kafka, the library's client span and the kafkajs producer span share the name `send <topic>` (the library's is
 kind CLIENT, kafkajs's is PRODUCER).
@@ -449,7 +462,7 @@ the RPC context.
 SQS handlers (`@SqsMessageHandler`) are CONSUMER spans with `messaging.system = aws_sqs`,
 `messaging.destination.name` (the consumer `name`), `messaging.operation.type = process` and
 `messaging.message.id`. The parent comes from the message attributes; a message without trace attributes starts its
-own trace. SQS handler methods are traced even when `autoInstrument.providers` is `false`, because they are entry
+own trace, even when the handler is called inside another span. SQS handler methods are traced even when `autoInstrument.providers` is `false`, because they are entry
 points; `@NoTrace()` and `autoInstrument.exclude` still apply. A batch handler (`batch: true`) has no parent
 and instead one span link per message that carries context, plus `messaging.batch.message_count`.
 
@@ -469,7 +482,8 @@ OtelModule.forRoot({ microservices: { captureData: 'error', maxDataBytes: 8192 }
 ```
 
 The payload is the handler's first argument, after pipes (for example a validated DTO). With the order
-`(@Ctx() ctx, @Payload() data)` nothing is captured. For SQS it is the message `Body` (parsed when it is JSON).
+`(@Ctx() ctx, @Payload() data)` nothing is captured. For SQS it is the message `Body` (parsed when it is JSON); a
+batch handler captures an array of the parsed bodies.
 Responses are never recorded.
 
 ### Metrics
@@ -506,19 +520,21 @@ broker.subscribe(topic, (msg) => withContext(extractContext(msg.headers), () => 
 
 ### Shutdown
 
-Call `app.enableShutdownHooks()` in microservices. Without it, the library flushes and exits on SIGTERM itself, so
-Nest never closes its transports, and Kafka consumers do not leave their group cleanly.
+Call `app.enableShutdownHooks()` in microservices. Without it, the library flushes and exits on SIGTERM or SIGINT
+itself, so Nest never closes its transports, and Kafka consumers do not leave their group cleanly.
 
 ### Disabling
 
-- `autoInstrument.microservices: false` turns off the client, server and `metadata` patches. Handler spans still
-  follow `autoInstrument.controllers`.
+- `autoInstrument.microservices: false` turns off the client, server and `metadata` patches, including the
+  `Server#addHandler` hook. Handler spans still follow `autoInstrument.controllers`, but a handler without `@Ctx()`
+  then has no transport to read: it reports `messaging.system = nestjs` and the pattern as its destination.
 - Turn off an instrumentation by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS`: `kafkajs`, `amqplib`, `ioredis`,
   `redis` or `aws-sdk`.
 
 ### Limits (microservices)
 
 - NATS, MQTT and gRPC get no propagation: each message starts a new trace.
+- gRPC has no client span, and its handler spans report `messaging.system = nestjs`.
 - RabbitMQ through `amqp-connection-manager`: messages published while the channel's send queue is busy are sent
   later from its worker loop, so their publish span may lose its parent.
 - SQS batch handlers use links, not a parent.
