@@ -64,6 +64,8 @@ export function spawnApp(o: {
   preload?: boolean;
   env?: Record<string, string>;
   receiver: OtlpReceiver;
+  /** How long to wait for `listening:<port>`. Default 20 s. */
+  startTimeoutMs?: number;
 }): Promise<RunningApp> {
   const args = [...(o.preload ? ['--import', '@oxth/nestjs-otel/register'] : []), join(FIXTURE_DIR, ENTRIES[o.entry])];
   const child: ChildProcess = spawn(process.execPath, args, {
@@ -101,7 +103,8 @@ export function spawnApp(o: {
       child.kill('SIGKILL');
       reject(new Error(`fixture ${o.entry} ${why}\n--- stdout ---\n${stdout}\n--- stderr ---\n${stderr}`));
     };
-    const timer = setTimeout(() => fail(`did not start within ${START_TIMEOUT_MS}ms`), START_TIMEOUT_MS);
+    const startTimeout = o.startTimeoutMs ?? START_TIMEOUT_MS;
+    const timer = setTimeout(() => fail(`did not start within ${startTimeout}ms`), startTimeout);
     void exited.then((code) => {
       if (started) return;
       clearTimeout(timer);

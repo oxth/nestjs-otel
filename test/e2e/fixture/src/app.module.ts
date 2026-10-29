@@ -46,3 +46,24 @@ export async function loadQueueModule(): Promise<Type | undefined> {
   }
   throw new Error(`unknown QUEUE ${queue}`);
 }
+
+/**
+ * The hybrid microservice setup selected by `TRANSPORT` (tcp | redis | kafka | rmq | sqs), connected to
+ * `REDIS_URL`, `KAFKA_BROKERS`, `AMQP_URL` or `SQS_ENDPOINT`. Without `TRANSPORT` nothing is loaded: no
+ * transport package is required.
+ */
+export async function loadMsModule(): Promise<import('./ms/ms.module.js').MsSetup | undefined> {
+  const transport = process.env.TRANSPORT;
+  if (!transport) return undefined;
+  if (transport === 'sqs') {
+    const endpoint = process.env.SQS_ENDPOINT;
+    if (!endpoint) throw new Error('SQS_ENDPOINT is required with TRANSPORT=sqs');
+    const { createSqsMsModule } = await import('./ms/sqs.module.js');
+    return createSqsMsModule(endpoint);
+  }
+  if (transport === 'tcp' || transport === 'redis' || transport === 'kafka' || transport === 'rmq') {
+    const { createMsModule } = await import('./ms/ms.module.js');
+    return createMsModule(transport);
+  }
+  throw new Error(`unknown TRANSPORT ${transport}`);
+}

@@ -1,3 +1,4 @@
+import { KafkaContainer } from '@testcontainers/kafka';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 
 export interface DbUrls {
@@ -5,6 +6,11 @@ export interface DbUrls {
   mysql: string;
   mongo: string;
   redis: string;
+  /** Kafka bootstrap brokers, `host:port`. */
+  kafka: string;
+  amqp: string;
+  /** SQS-compatible endpoint (ElasticMQ). */
+  sqs: string;
 }
 
 const PASSWORD = 'test';
@@ -52,9 +58,35 @@ function redis(): Promise<StartedTestContainer> {
     .start();
 }
 
-/** Starts Postgres 17, MySQL 8.4, Mongo 8 and Redis 8 in parallel. */
+const KAFKA_PORT = 9093;
+
+function kafka(): Promise<StartedTestContainer> {
+  return new KafkaContainer('confluentinc/cp-kafka:8.0.0').withKraft().start();
+}
+
+function rabbitmq(): Promise<StartedTestContainer> {
+  return new GenericContainer('rabbitmq:4')
+    // `guest` may only log in from localhost, and the mapped port isn't.
+    .withEnvironment({ RABBITMQ_DEFAULT_USER: PASSWORD, RABBITMQ_DEFAULT_PASS: PASSWORD })
+    .withExposedPorts(5672)
+    .withWaitStrategy(Wait.forLogMessage(/Server startup complete/))
+    .withStartupTimeout(120_000)
+    .start();
+}
+
+function elasticmq(): Promise<StartedTestContainer> {
+  return new GenericContainer('softwaremill/elasticmq-native')
+    .withExposedPorts(9324)
+    .withWaitStrategy(Wait.forLogMessage(/started in/))
+    .start();
+}
+
+/**
+ * Starts Postgres 17, MySQL 8.4, Mongo 8, Redis 8, Kafka (KRaft), RabbitMQ 4 and ElasticMQ (SQS) in
+ * parallel.
+ */
 export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<void> }> {
-  const results = await Promise.allSettled([postgres(), mysql(), mongo(), redis()]);
+  const results = await Promise.allSettled([postgres(), mysql(), mongo(), redis(), kafka(), rabbitmq(), elasticmq()]);
   const started = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   const stop = async (): Promise<void> => {
     await Promise.all(started.map((c) => c.stop()));
@@ -64,7 +96,7 @@ export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<
     await stop();
     throw failed.reason;
   }
-  const [pg, my, mg, rd] = started;
+  const [pg, my, mg, rd, kf, mq, sq] = started;
   const at = (c: StartedTestContainer, port: number) => `${c.getHost()}:${c.getMappedPort(port)}`;
   return {
     urls: {
@@ -72,6 +104,9 @@ export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<
       mysql: `mysql://root:${PASSWORD}@${at(my, 3306)}/${DATABASE}`,
       mongo: `mongodb://${at(mg, 27017)}/${DATABASE}`,
       redis: `redis://${at(rd, 6379)}`,
+      kafka: at(kf, KAFKA_PORT),
+      amqp: `amqp://${PASSWORD}:${PASSWORD}@${at(mq, 5672)}`,
+      sqs: `http://${at(sq, 9324)}`,
     },
     stop,
   };
