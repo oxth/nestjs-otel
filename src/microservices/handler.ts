@@ -1,12 +1,13 @@
-import { type Attributes, metrics, type Span, SpanKind } from '@opentelemetry/api';
+import { type Attributes, context, metrics, type Span, SpanKind } from '@opentelemetry/api';
 import { classifyError } from '../errors/classify';
+import { errorType } from '../errors/record';
 import { PROCESS_DURATION_BUCKETS } from '../queue/process-job';
 import { getDefaultRedactor, serializeBody } from '../redact/redactor';
 import { SCOPE_NAME } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults } from '../tracing/decorators';
 import type { CallDescription, WrapOptions } from '../tracing/wrap';
-import { patternToString, systemOfContext } from './pattern';
+import { findRpcContext, patternToString, RPC_CONTEXT_KEY, systemOfContext } from './pattern';
 import { getMicroservicesSettings } from './settings';
 
 /** `PATTERN_METADATA` / `PATTERN_HANDLER_METADATA` in `@nestjs/microservices/constants`. */
@@ -26,17 +27,12 @@ function instruments() {
   };
 }
 
-function errorType(err: unknown): string {
-  if (err !== null && typeof err === 'object') return (err as object).constructor?.name || 'Object';
-  return typeof err;
-}
-
-/** The RPC context: the last argument whose class is a known transport context. */
+/**
+ * The RPC context: the last argument whose class is a known transport context, else the one the
+ * `Server.addHandler` patch put in the active context (Nest omits it without `@Ctx()`).
+ */
 function findContext(args: unknown[]): unknown {
-  for (let i = args.length - 1; i >= 0; i--) {
-    if (systemOfContext(args[i]) !== undefined) return args[i];
-  }
-  return undefined;
+  return findRpcContext(args) ?? context.active().getValue(RPC_CONTEXT_KEY);
 }
 
 function destinationOf(ctx: any, system: string | undefined): string | undefined {
@@ -112,7 +108,7 @@ export function describeHandler(owner: object, name: string): Pick<WrapOptions, 
       const kind = isEvent ? 'event' : 'message';
 
       const describe = (args: unknown[]): CallDescription => {
-        const ctx = findContext(args);
+        const ctx = safely('find rpc context', () => findContext(args), undefined);
         const contextSystem = systemOfContext(ctx);
         const call: HandlerCall = {
           system: contextSystem ?? 'nestjs',

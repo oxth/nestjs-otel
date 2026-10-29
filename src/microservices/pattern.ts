@@ -1,3 +1,4 @@
+import { createContextKey } from '@opentelemetry/api';
 import { safely } from '../shared/safe';
 
 function sortKeys(v: unknown): unknown {
@@ -58,4 +59,15 @@ export function systemOfClient(client: object): string {
 export function systemOfContext(ctx: unknown): string | undefined {
   const n = ctorName(ctx);
   return n !== undefined && Object.hasOwn(CONTEXTS, n) ? CONTEXTS[n] : undefined;
+}
+
+/** The RPC context of the message being handled, set by the `Server.addHandler` patch. */
+export const RPC_CONTEXT_KEY = createContextKey('@oxth/nestjs-otel.rpc-context');
+
+/** The last argument whose class is a known transport context. */
+export function findRpcContext(args: readonly unknown[]): unknown {
+  for (let i = args.length - 1; i >= 0; i--) {
+    if (systemOfContext(args[i]) !== undefined) return args[i];
+  }
+  return undefined;
 }

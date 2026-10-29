@@ -83,7 +83,8 @@ export function markStackRecorded(span: Span, stack: string): void {
   stacks.push(k);
 }
 
-function errorType(err: unknown): string {
+/** `error.type` / `exception.type`: the constructor name, `'Object'`, or the `typeof` of a primitive. */
+export function errorType(err: unknown): string {
   if (err !== null && typeof err === 'object') return (err as object).constructor?.name || 'Object';
   return typeof err;
 }

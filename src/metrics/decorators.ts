@@ -1,4 +1,5 @@
 import { type Attributes, type MetricOptions, metrics } from '@opentelemetry/api';
+import { errorType as typeOfError } from '../errors/record';
 import { SCOPE_NAME } from '../shared/constants';
 import { safely } from '../shared/safe';
 import { WRAPPED } from '../shared/symbols';
@@ -57,7 +58,7 @@ export function Histogram(name: string, o?: MetricDecoratorOptions): MethodDecor
       let errorType: string | undefined;
       let recorded = false;
       const onError = (err: unknown) => {
-        errorType = safely('error type', () => (err as { constructor?: { name?: string } } | null)?.constructor?.name || 'Error', 'Error');
+        errorType = safely('error type', () => typeOfError(err), 'Error');
       };
       const onFinally = () => {
         if (recorded) return;

@@ -1,5 +1,5 @@
 import { type Attributes, context, metrics, type Span, trace } from '@opentelemetry/api';
-import { recordError } from '../errors/record';
+import { errorType, recordError } from '../errors/record';
 import { getDefaultRedactor, serializeBody } from '../redact/redactor';
 import { SCOPE_NAME } from '../shared/constants';
 import { safely } from '../shared/safe';
@@ -102,7 +102,7 @@ function finish(
       };
       if (outcome === 'completed') m.completed.add(1, base);
       if (outcome === 'failed') m.failed.add(1, { ...base, 'bullmq.job.will_retry': willRetry === true });
-      const errType = outcome === 'failed' ? { 'error.type': String((err as Error)?.name ?? 'Error') } : {};
+      const errType = outcome === 'failed' ? { 'error.type': errorType(err) } : {};
       m.duration.record((Date.now() - startedAt) / 1000, { ...base, ...errType });
       if ((job?.attemptsMade ?? 0) === 0) {
         const wait = Math.max(0, (job?.processedOn ?? Date.now()) - ((job?.timestamp ?? 0) + (job?.delay ?? 0)));

@@ -189,7 +189,9 @@ describe('sync processors', () => {
 describe('callProcessJob failure', () => {
   it('rethrows the same error and records it', async () => {
     const w = new mod.Worker();
-    const err = new Error('boom');
+    // `error.type` is the constructor name (one rule across the library), not `err.name`.
+    class JobFailed extends Error {}
+    const err = new JobFailed('boom');
     w.impl = async () => {
       throw err;
     };
@@ -205,7 +207,7 @@ describe('callProcessJob failure', () => {
     expect(failed).toHaveLength(1);
     expect(failed[0].attributes['bullmq.job.will_retry']).toBe(true);
     const dur = await points('messaging.process.duration');
-    expect(dur[0].attributes['error.type']).toBe('Error');
+    expect(dur[0].attributes['error.type']).toBe('JobFailed');
   });
 
   it('will_retry=false on last attempt and for UnrecoverableError', async () => {

@@ -33,6 +33,9 @@ propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 
 const received: { data?: unknown; metadata?: unknown }[] = [];
 let eventSeen: (() => void) | undefined;
+const dupSeen: string[] = [];
+let dupDone: (() => void) | undefined;
+let e2Seen: (() => void) | undefined;
 
 @Controller()
 class UsersController {
@@ -51,6 +54,30 @@ class UsersController {
   created(@Payload() data: unknown): void {
     received.push({ data });
     eventSeen?.();
+  }
+
+  // No param decorators: Nest passes only the payload.
+  @EventPattern('e2')
+  handle(data: unknown): void {
+    received.push({ data });
+    e2Seen?.();
+  }
+
+  @MessagePattern('m2')
+  m2(@Payload() data: unknown): unknown {
+    return { m2: data };
+  }
+
+  @EventPattern('dup')
+  dupA(_data: unknown): void {
+    dupSeen.push('a');
+    if (dupSeen.length === 2) dupDone?.();
+  }
+
+  @EventPattern('dup')
+  dupB(_data: unknown): void {
+    dupSeen.push('b');
+    if (dupSeen.length === 2) dupDone?.();
   }
 }
 
@@ -93,10 +120,12 @@ beforeAll(async () => {
     imports: [OtelModule.forRoot({ autoInstrument: { microservices: false } })],
     controllers: [UsersController],
   }).compile();
-  app = moduleRef.createNestApplication({ logger: false });
-  app.connectMicroservice({ transport: Transport.TCP, options: { port } }, { inheritAppConfig: true });
+  // Patched before `connectMicroservice`, which registers the handlers (`Server.addHandler`) right away;
+  // in an app, `OtelModule` patches during `NestFactory.create`, earlier still.
   patchClients(ms);
   patchServers(ms);
+  app = moduleRef.createNestApplication({ logger: false });
+  app.connectMicroservice({ transport: Transport.TCP, options: { port } }, { inheritAppConfig: true });
   await app.startAllMicroservices();
   await app.init();
   client = newClient();
@@ -151,7 +180,7 @@ describe('microservices over TCP', () => {
     const event = await waitFor(() => byName('UsersController.created'));
     expect(event.kind).toBe(SpanKind.CONSUMER);
     expect(event.attributes).toMatchObject({
-      'messaging.system': 'nestjs',
+      'messaging.system': 'tcp',
       'messaging.destination.name': 'user.created',
       'nestjs.microservice.kind': 'event',
     });
@@ -160,6 +189,45 @@ describe('microservices over TCP', () => {
     const failed = await waitFor(() => byName('UsersController.fail'));
     expect(failed.kind).toBe(SpanKind.SERVER);
     expect(failed.status.code).toBe(SpanStatusCode.ERROR);
+    expect(failed.attributes['messaging.system']).toBe('tcp');
+    const data = String(failed.attributes['nestjs.microservice.data']);
+    expect(data).toContain('[REDACTED]');
+    expect(data).not.toContain('"p"');
+  });
+
+  it('handlers without @Ctx() get the transport context', async () => {
+    const seen = new Promise<void>((r) => (e2Seen = r));
+    await lastValueFrom(client.emit('e2', { id: 10 }));
+    await seen;
+    const e2 = await waitFor(() => byName('UsersController.handle'));
+    expect(e2.kind).toBe(SpanKind.CONSUMER);
+    expect(e2.attributes).toMatchObject({
+      'messaging.system': 'tcp',
+      'messaging.destination.name': 'e2',
+      'nestjs.microservice.kind': 'event',
+    });
+
+    expect(await lastValueFrom(client.send('m2', { id: 11 }))).toEqual({ m2: { id: 11 } });
+    const m2 = await waitFor(() => byName('UsersController.m2'));
+    expect(m2.kind).toBe(SpanKind.SERVER);
+    expect(m2.attributes).toMatchObject({
+      'messaging.system': 'tcp',
+      'messaging.destination.name': 'm2',
+      'nestjs.microservice.kind': 'message',
+    });
+  });
+
+  it('several event handlers for one pattern all run', async () => {
+    dupSeen.length = 0;
+    const done = new Promise<void>((r) => (dupDone = r));
+    await lastValueFrom(client.emit('dup', { id: 12 }));
+    await done;
+    expect([...dupSeen].sort()).toEqual(['a', 'b']);
+    const a = await waitFor(() => byName('UsersController.dupA'));
+    const b = await waitFor(() => byName('UsersController.dupB'));
+    for (const s of [a, b]) {
+      expect(s.attributes).toMatchObject({ 'messaging.system': 'tcp', 'messaging.destination.name': 'dup' });
+    }
   });
 
   it('emit: producer span', async () => {
