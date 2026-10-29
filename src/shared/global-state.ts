@@ -13,6 +13,8 @@ export interface GlobalState {
   warned: Set<string>;
   redactor?: Redactor;
   db?: DbSettings;
+  /** The BullMQ telemetry adapter singleton (shared by CJS and ESM copies). */
+  bullmqTelemetry?: object;
   /** Raw text → masked replacement, applied by every redactor's `redactString` (see `registerMaskedText`). */
   maskedTexts?: Map<string, string>;
 }
