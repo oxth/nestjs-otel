@@ -234,15 +234,18 @@ function createTelemetry(): BullmqTelemetry {
       with: (ctx, fn) => context.with(ctx, fn),
       active: () => context.active(),
       root: () => ROOT_CONTEXT,
+      // '' (falsy) when there is nothing to propagate, e.g. under a suppressed context: BullMQ 5.24's
+      // `moveToFailed` (a non-recorded operation) would otherwise overwrite the job's metadata with '{}',
+      // moving retried attempts out of the producer's trace.
       getMetadata: (ctx) =>
         safely(
           'bullmq getMetadata',
           () => {
             const carrier: Record<string, string> = {};
             propagation.inject(ctx, carrier);
-            return JSON.stringify(carrier);
+            return Object.keys(carrier).length > 0 ? JSON.stringify(carrier) : '';
           },
-          '{}',
+          '',
         ),
       fromMetadata: (activeCtx, metadata) =>
         safely('bullmq fromMetadata', () => propagation.extract(activeCtx, JSON.parse(metadata) as object), activeCtx),

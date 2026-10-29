@@ -211,6 +211,16 @@ describe('bullmq telemetry adapter', () => {
     });
   });
 
+  it('getMetadata is empty when nothing propagates (suppressed or no span)', () => {
+    trace.getTracer('test').startActiveSpan('S', (s) => {
+      expect(t().contextManager.getMetadata(suppressTracing(context.active()))).toBe('');
+      const op = t().tracer.startSpan('moveToDelayed emails', { kind: 0 });
+      expect(t().contextManager.getMetadata(op.setSpanOnContext(context.active()))).toBe('');
+      s.end();
+    });
+    expect(t().contextManager.getMetadata(ROOT_CONTEXT)).toBe('');
+  });
+
   it('root() is ROOT_CONTEXT and singleton is stable', () => {
     expect(t().contextManager.root()).toBe(ROOT_CONTEXT);
     expect(getBullmqTelemetry()).toBe(getBullmqTelemetry());
