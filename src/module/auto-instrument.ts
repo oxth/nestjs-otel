@@ -1,5 +1,6 @@
 import { ModuleRef, type ModulesContainer } from '@nestjs/core';
 import { applyFailureContext } from '../http/failure-context';
+import { describeHandler } from '../microservices/handler';
 import { NO_CAPTURE_BODY_META } from '../http/no-capture-body.decorator';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults, getSpanParamAttributes, NO_TRACE_META, TRACE_META } from '../tracing/decorators';
@@ -168,6 +169,7 @@ function instrumentClass(
         attributes: { 'code.namespace': className, 'code.function': name },
         paramAttributes: safely('read span attributes', () => getSpanParamAttributes(owner, name), undefined),
         classify: getClassifyDefaults,
+        ...(role === 'controller' && describeHandler(owner, name)),
       });
       wrapped.push(`${className}.${name}`);
     }

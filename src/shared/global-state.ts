@@ -3,6 +3,7 @@ export interface SdkHandle {
   forceFlush(): Promise<void>;
 }
 
+import type { MicroservicesSettings } from '../microservices/settings';
 import type { DbSettings } from '../orm/settings';
 import type { BullmqSettings } from '../queue/settings';
 import type { Redactor } from '../redact/redactor';
@@ -15,6 +16,7 @@ export interface GlobalState {
   redactor?: Redactor;
   db?: DbSettings;
   bullmq?: BullmqSettings;
+  microservices?: MicroservicesSettings;
   /** The BullMQ telemetry adapter singleton (shared by CJS and ESM copies). */
   bullmqTelemetry?: object;
   /** Raw text → masked replacement, applied by every redactor's `redactString` (see `registerMaskedText`). */

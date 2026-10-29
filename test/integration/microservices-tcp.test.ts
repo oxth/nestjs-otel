@@ -132,6 +132,36 @@ describe('microservices over TCP', () => {
     expect(parentId(handler)).toBe(send.spanContext().spanId);
   });
 
+  it('handler span is SERVER with messaging attributes over real TCP', async () => {
+    await lastValueFrom(client.send('users.get', { id: 8 }));
+    const handler = await waitFor(() => byName('UsersController.get'));
+    expect(handler.kind).toBe(SpanKind.SERVER);
+    expect(handler.attributes).toMatchObject({
+      'messaging.system': 'tcp',
+      'messaging.destination.name': 'users.get',
+      'messaging.operation.type': 'process',
+      'nestjs.microservice.kind': 'message',
+      'nestjs.microservice.pattern': 'users.get',
+    });
+    expect(handler.attributes['nestjs.microservice.data']).toBeUndefined();
+
+    const seen = new Promise<void>((r) => (eventSeen = r));
+    await lastValueFrom(client.emit('user.created', { id: 9 }));
+    await seen;
+    const event = await waitFor(() => byName('UsersController.created'));
+    expect(event.kind).toBe(SpanKind.CONSUMER);
+    expect(event.attributes).toMatchObject({
+      'messaging.system': 'nestjs',
+      'messaging.destination.name': 'user.created',
+      'nestjs.microservice.kind': 'event',
+    });
+
+    await expect(lastValueFrom(client.send('users.fail', { password: 'p' }))).rejects.toBeDefined();
+    const failed = await waitFor(() => byName('UsersController.fail'));
+    expect(failed.kind).toBe(SpanKind.SERVER);
+    expect(failed.status.code).toBe(SpanStatusCode.ERROR);
+  });
+
   it('emit: producer span', async () => {
     const seen = new Promise<void>((r) => (eventSeen = r));
     await tracer().startActiveSpan('caller', async (caller) => {

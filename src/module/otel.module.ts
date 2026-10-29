@@ -13,6 +13,7 @@ import { HttpOtelInterceptor } from '../http/http-otel.interceptor';
 import { OtelLogger } from '../logs/otel-logger';
 import { MetricService } from '../metrics/metric.service';
 import { instrumentMicroservices } from '../microservices/install';
+import { setMicroservicesSettings } from '../microservices/settings';
 import { setDbSettings } from '../orm/settings';
 import { setBullmqSettings } from '../queue/settings';
 import { setDefaultRedactor } from '../redact/redactor';
@@ -43,9 +44,12 @@ const instrumentedProvider: Provider = {
     safely('set default redactor', () => setDefaultRedactor(opts.redactor), undefined);
     safely('set db settings', () => setDbSettings(opts.db), undefined);
     safely('set bullmq settings', () => setBullmqSettings(opts.bullmq), undefined);
+    safely('set microservices settings', () => setMicroservicesSettings(opts.microservices), undefined);
+    // App prototypes first, synchronously: the async import below would otherwise delay them (the two touch disjoint prototypes).
+    const report = safely('instrument application', () => instrumentApplication(container, opts), { wrapped: [] });
     // Never rejects; patches `@nestjs/microservices` clients/servers before handlers are bound.
     await instrumentMicroservices(opts);
-    return safely('instrument application', () => instrumentApplication(container, opts), { wrapped: [] });
+    return report;
   },
 };
 

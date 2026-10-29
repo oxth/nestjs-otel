@@ -1,5 +1,5 @@
-import { SpanStatusCode, trace } from '@opentelemetry/api';
-import { lastValueFrom, of, throwError } from 'rxjs';
+import { context, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import { lastValueFrom, of, Subject, throwError } from 'rxjs';
 import { afterAll, describe, expect, it, vi } from 'vitest';
 import { WRAPPED } from '../../src/shared/symbols';
 import { copyMethodMetadata } from '../../src/tracing/copy-metadata';
@@ -205,6 +205,93 @@ describe('wrapMethod', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('wrapMethod describe hook', () => {
+  it('adds attributes and links, starts in the given parent, settles once with duration', () => {
+    const parent = trace.getTracer('test').startSpan('parent');
+    parent.end();
+    const link = { context: parent.spanContext() };
+    const settled = vi.fn();
+    const describe = vi.fn((args: unknown[]) => ({
+      attributes: { a: String(args[0]) },
+      links: [link],
+      parent: trace.setSpan(context.active(), parent),
+      onSettled: settled,
+    }));
+    const w = wrapMethod((x: string) => x.toUpperCase(), { spanName: 'C.d', kind: SpanKind.SERVER, classify, describe });
+    expect(w('hi')).toBe('HI');
+    expect(describe).toHaveBeenCalledTimes(1);
+    const span = t.spans().find((s) => s.name === 'C.d')!;
+    expect(span.kind).toBe(SpanKind.SERVER);
+    expect(span.attributes.a).toBe('hi');
+    expect(span.links).toHaveLength(1);
+    expect(span.parentSpanContext?.spanId).toBe(parent.spanContext().spanId);
+    expect(settled).toHaveBeenCalledTimes(1);
+    const [s, err, seconds] = settled.mock.calls[0]!;
+    expect(s.spanContext().spanId).toBe(span.spanContext().spanId);
+    expect(err).toBeUndefined();
+    expect(seconds).toBeGreaterThanOrEqual(0);
+  });
+
+  it('onSettled gets the error for sync throws and rejections, before the span ends', async () => {
+    const e = new Error('x');
+    const seen: unknown[] = [];
+    const describe = () => ({
+      onSettled: (span: any, err: unknown) => seen.push([err, span.ended]),
+    });
+    const sync = wrapMethod(
+      () => {
+        throw e;
+      },
+      { spanName: 'C.s', classify, describe },
+    );
+    expect(() => sync()).toThrow(e);
+    const asyncFn = wrapMethod(async () => Promise.reject(e), { spanName: 'C.a', classify, describe });
+    await expect(asyncFn()).rejects.toBe(e);
+    expect(seen).toEqual([
+      [e, false],
+      [e, false],
+    ]);
+  });
+
+  it('observable: settles on complete, error or unsubscribe, exactly once', async () => {
+    const settled = vi.fn();
+    const subject = new Subject<number>();
+    const w = wrapMethod(() => subject.asObservable(), { spanName: 'C.o', classify, describe: () => ({ onSettled: settled }) });
+    const sub = w().subscribe();
+    expect(settled).not.toHaveBeenCalled();
+    sub.unsubscribe();
+    expect(settled).toHaveBeenCalledTimes(1);
+
+    const e = new Error('o');
+    const failing = wrapMethod(() => throwError(() => e), { spanName: 'C.oe', classify, describe: () => ({ onSettled: settled }) });
+    await expect(lastValueFrom(failing())).rejects.toBe(e);
+    expect(settled).toHaveBeenCalledTimes(2);
+    expect(settled.mock.calls[1]![1]).toBe(e);
+  });
+
+  it('a throwing describe or onSettled never changes the method behaviour', () => {
+    const a = wrapMethod((x: number) => x + 1, {
+      spanName: 'C.x',
+      classify,
+      describe: () => {
+        throw new Error('describe');
+      },
+    });
+    expect(a(1)).toBe(2);
+    const b = wrapMethod((x: number) => x + 1, {
+      spanName: 'C.y',
+      classify,
+      describe: () => ({
+        onSettled: () => {
+          throw new Error('settled');
+        },
+      }),
+    });
+    expect(b(1)).toBe(2);
+    expect(t.spans().map((s) => s.name)).toEqual(['C.x', 'C.y']);
   });
 });
 

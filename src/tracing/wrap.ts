@@ -1,6 +1,8 @@
 import {
   type Attributes,
+  type Context,
   INVALID_SPAN_CONTEXT,
+  type Link,
   type Span,
   SpanKind,
   type SpanOptions,
@@ -20,6 +22,30 @@ export interface WrapOptions {
   kind?: SpanKind;
   paramAttributes?: { index: number; name: string }[];
   classify: () => ClassifyOptions;
+  /**
+   * Per-call additions to the span, computed from the call's arguments (once per call, inside `safely`).
+   * Without it, the wrapper behaves exactly as it does for ordinary methods.
+   */
+  describe?: (args: unknown[]) => CallDescription | undefined;
+}
+
+export interface CallDescription {
+  /** Merged over the static and parameter attributes. */
+  attributes?: Attributes;
+  links?: Link[];
+  /** The context the span starts in, instead of the active one. */
+  parent?: Context;
+  /**
+   * Runs exactly once when the result settles (sync return/throw, Promise settle, Observable
+   * complete/error/unsubscribe), before the span ends. `error` is the failure, if any.
+   */
+  onSettled?: (span: Span, error: unknown | undefined, durationSeconds: number) => void;
+}
+
+/** Per-call options of `runInSpan` beyond the span options. */
+export interface RunExtras {
+  parent?: Context;
+  onSettled?: CallDescription['onSettled'];
 }
 
 export interface ResultHooks {
@@ -105,7 +131,9 @@ export function runInSpan<T>(
   spanOptions: () => SpanOptions,
   classify: () => ClassifyOptions,
   invoke: (span: Span) => T,
+  extras?: RunExtras,
 ): T {
+  const startedAt = extras?.onSettled ? performance.now() : 0;
   let outcome: Outcome<T> | undefined;
   let span: Span | undefined;
   const run = (s: Span) => {
@@ -118,12 +146,18 @@ export function runInSpan<T>(
 
   safely(
     'start span',
-    () =>
-      trace.getTracer(SCOPE_NAME).startActiveSpan(spanName, spanOptions(), (s: Span) => {
+    () => {
+      const start = (s: Span) => {
         if (outcome) return;
         span = s;
         run(s);
-      }),
+      };
+      const tracer = trace.getTracer(SCOPE_NAME);
+      const parent = extras?.parent;
+      return parent
+        ? tracer.startActiveSpan(spanName, spanOptions(), parent, start)
+        : tracer.startActiveSpan(spanName, spanOptions(), start);
+    },
     undefined,
   );
 
@@ -136,12 +170,21 @@ export function runInSpan<T>(
   }
 
   const active = span;
+  const onSettled = extras?.onSettled;
   let ended = false;
+  let failure: unknown;
   const hooks: ResultHooks = {
-    onError: (err) => safely('record error', () => recordError(active, err, classify()), undefined),
+    onError: (err) => {
+      failure = err;
+      safely('record error', () => recordError(active, err, classify()), undefined);
+    },
     onFinally: () => {
       if (ended) return;
       ended = true;
+      if (onSettled) {
+        const seconds = (performance.now() - startedAt) / 1000;
+        safely('settled hook', () => onSettled(active, failure, seconds), undefined);
+      }
       safely('end span', () => active.end(), undefined);
     },
   };
@@ -160,7 +203,22 @@ function markWrapped(original: (...a: any[]) => any, wrapper: (...a: any[]) => a
 }
 
 export function wrapMethod<F extends (...a: any[]) => any>(original: F, o: WrapOptions): F {
+  const describe = o.describe;
   const wrapper = function (this: unknown, ...args: unknown[]) {
+    if (describe) {
+      const d = safely('describe call', () => describe(args), undefined);
+      return runInSpan(
+        o.spanName,
+        () => ({
+          kind: o.kind ?? SpanKind.INTERNAL,
+          attributes: { ...o.attributes, ...paramAttributesOf(o.paramAttributes, args), ...d?.attributes },
+          ...(d?.links && { links: d.links }),
+        }),
+        o.classify,
+        () => original.apply(this, args),
+        d && { parent: d.parent, onSettled: d.onSettled },
+      );
+    }
     return runInSpan(
       o.spanName,
       () => ({

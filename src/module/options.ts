@@ -1,4 +1,9 @@
 import type { ClassifyOptions } from '../errors/classify';
+import {
+  type MicroservicesOptions,
+  type MicroservicesSettings,
+  resolveMicroservicesSettings,
+} from '../microservices/settings';
 import { type BullmqOptions, type BullmqSettings, resolveBullmqSettings } from '../queue/settings';
 import { resolveDbSettings, type DbOptions, type DbSettings } from '../orm/settings';
 import { createRedactor, type RedactOptions, type Redactor } from '../redact/redactor';
@@ -33,6 +38,8 @@ export interface OtelModuleOptions {
   redact?: RedactOptions;
   db?: DbOptions;
   bullmq?: BullmqOptions;
+  /** Payload capture on `@MessagePattern`/`@EventPattern` handler spans. */
+  microservices?: MicroservicesOptions;
 }
 
 export interface ResolvedOtelOptions {
@@ -58,6 +65,7 @@ export interface ResolvedOtelOptions {
   redactor: Redactor;
   db: DbSettings;
   bullmq: BullmqSettings;
+  microservices: MicroservicesSettings;
   classify: ClassifyOptions;
 }
 
@@ -101,6 +109,7 @@ export function resolveOptions(o: OtelModuleOptions = {}): ResolvedOtelOptions {
     redactor: createRedactor(redact),
     db: resolveDbSettings(o.db),
     bullmq: resolveBullmqSettings(o.bullmq),
+    microservices: resolveMicroservicesSettings(o.microservices),
     classify: { treat4xxAsError },
   };
 }
