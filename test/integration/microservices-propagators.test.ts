@@ -99,7 +99,7 @@ beforeEach(() => t.reset());
 
 /** The carrier for `span` under the global (non-W3C) propagator. */
 const carrierFor = (span: { spanContext(): unknown }) =>
-  injectContext({} as Record<string, string>, trace.setSpan(ROOT_CONTEXT, span as never));
+  injectContext({}, trace.setSpan(ROOT_CONTEXT, span as never));
 
 describe('a non-W3C global propagator (OTEL_PROPAGATORS)', () => {
   it('TCP: the carrier uses its fields and the handler continues the trace', async () => {

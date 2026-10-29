@@ -24,11 +24,21 @@ describe('propagation helpers', () => {
     });
   });
 
-  it('injectContext keeps the carrier type', () => {
-    const headers: { 'content-type': string } & Record<string, unknown> = { 'content-type': 'json' };
-    // Compile-time: the result is the carrier's own type, not Record<string, unknown>.
-    const out: { 'content-type': string } = injectContext(headers);
+  it('injectContext keeps the carrier type and stays indexable', () => {
+    // Compile-time checks: an interface carrier is accepted and keeps its type; `{}` can be indexed.
+    interface Headers {
+      'content-type': string;
+    }
+    const headers: Headers = { 'content-type': 'json' };
+    const out: Headers = injectContext(headers);
     expect(out['content-type']).toBe('json');
+    const typed: string | undefined = injectContext({} as Record<string, string>).traceparent;
+    expect(typed).toBeUndefined();
+    trace.getTracer('t').startActiveSpan('S', (span) => {
+      const tp: unknown = injectContext({}).traceparent;
+      expect(tp).toEqual(expect.stringMatching(/^00-/));
+      span.end();
+    });
   });
 
   it('injectContext keeps existing keys and returns the same object', () => {

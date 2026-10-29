@@ -61,8 +61,9 @@ function finisher(span: Span | undefined): (err?: { error: unknown }) => void {
 /**
  * `send()` is cold: the span starts on subscription, in the context active when `send()` was
  * called, so an Observable subscribed later or elsewhere still parents correctly. Values, errors and
- * completion reach the subscriber in that same caller context (not the socket's), and a teardown
- * before the stream settles (unsubscribe, `timeout()`) marks the span `nestjs.microservice.cancelled`.
+ * completion reach the subscriber in that same caller context (not the socket's). A teardown before
+ * any value and before complete or error (unsubscribe, `timeout()`) marks the span
+ * `nestjs.microservice.cancelled`; `firstValueFrom`/`take(1)` unsubscribe inside `next`, after the reply.
  */
 const sendWrapper: MethodWrapper = (original) =>
   function (this: any, pattern: unknown, data: unknown, ...rest: unknown[]) {
@@ -74,12 +75,16 @@ const sendWrapper: MethodWrapper = (original) =>
       const span = startClientSpan(this, pattern, 'message', captured);
       const finish = finisher(span);
       const spanCtx = span ? trace.setSpan(captured, span) : captured;
+      // A reply arrived, or the stream completed or failed: a later teardown is not a cancellation.
       let settled = false;
       let inner: Subscription | undefined;
       try {
         inner = context.with(spanCtx, () =>
           source.subscribe({
-            next: (v: unknown) => context.with(captured, () => subscriber.next(v)),
+            next: (v: unknown) => {
+              settled = true;
+              context.with(captured, () => subscriber.next(v));
+            },
             error: (error: unknown) => {
               settled = true;
               finish({ error });

@@ -343,7 +343,7 @@ describe('@ssut/nestjs-sqs handlers', () => {
   beforeEach(() => t.reset());
 
   const attrsFrom = (span: { spanContext(): unknown }) => {
-    const carrier = injectContext({}, trace.setSpan(context.active(), span as never)) as Record<string, string>;
+    const carrier = injectContext({}, trace.setSpan(context.active(), span as never));
     return { traceparent: { DataType: 'String', StringValue: carrier.traceparent! } };
   };
   const producer = () => {

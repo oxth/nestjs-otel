@@ -21,7 +21,10 @@ function carrierOf(message: SqsMessage | undefined): Record<string, unknown> | u
   const attrs = message?.MessageAttributes;
   if (!attrs || typeof attrs !== 'object') return undefined;
   const carrier: Record<string, unknown> = {};
-  for (const key of propagation.fields()) {
+  const fields = propagation.fields();
+  if (!Array.isArray(fields)) return undefined;
+  for (const key of fields) {
+    if (typeof key !== 'string') continue;
     if (!Object.hasOwn(attrs, key)) continue;
     const v = attrs[key]?.StringValue;
     if (typeof v === 'string') carrier[key] = v;

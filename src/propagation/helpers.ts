@@ -5,15 +5,20 @@ import { safely } from '../shared/safe';
  * Writes the trace context of `ctx` (default: active) into `carrier` with the global propagator
  * (W3C unless `OTEL_PROPAGATORS` says otherwise) and returns `carrier`. Never throws.
  */
-export function injectContext<T extends Record<string, unknown>>(carrier: T, ctx: Context = context.active()): T {
+export function injectContext<T extends object>(
+  carrier: T,
+  ctx: Context = context.active(),
+): T & Record<string, unknown> {
+  // The propagator may add any key, so the result is also indexable by string.
+  const out = carrier as T & Record<string, unknown>;
   return safely(
     'injectContext',
     () => {
-      if (carrier === null || typeof carrier !== 'object') return carrier;
-      propagation.inject(ctx, carrier, defaultTextMapSetter);
-      return carrier;
+      if (out === null || typeof out !== 'object') return out;
+      propagation.inject(ctx, out, defaultTextMapSetter);
+      return out;
     },
-    carrier,
+    out,
   );
 }
 

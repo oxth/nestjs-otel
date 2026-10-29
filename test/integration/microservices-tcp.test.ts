@@ -24,7 +24,7 @@ import { Test } from '@nestjs/testing';
 import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
-import { from, lastValueFrom, map, type Observable, switchMap, timeout } from 'rxjs';
+import { firstValueFrom, from, lastValueFrom, map, type Observable, switchMap, take, timeout } from 'rxjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { OtelModule } from '../../src/index';
 import {
@@ -272,6 +272,20 @@ describe('microservices over TCP', () => {
     const send = await waitFor(() => byName('send slow'));
     expect(send.attributes['nestjs.microservice.cancelled']).toBe(true);
     expect(send.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  it('firstValueFrom and take(1) do not mark the send span cancelled', async () => {
+    expect(await firstValueFrom(client.send('m2', { id: 16 }))).toEqual({ m2: { id: 16 } });
+    expect(await lastValueFrom(client.send('users.get', { id: 17 }).pipe(take(1)))).toEqual({
+      ok: true,
+      data: { id: 17 },
+    });
+    const first = await waitFor(() => byName('send m2'));
+    const taken = await waitFor(() => byName('send users.get'));
+    for (const s of [first, taken]) {
+      expect(s.attributes['nestjs.microservice.cancelled']).toBeUndefined();
+      expect(s.status.code).not.toBe(SpanStatusCode.ERROR);
+    }
   });
 
   it('subscriber callbacks run in the caller context, not the socket one', async () => {
