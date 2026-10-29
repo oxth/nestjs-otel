@@ -1,5 +1,13 @@
 import { createServer } from 'node:net';
-import { Controller, type INestApplication } from '@nestjs/common';
+import {
+  type CallHandler,
+  Controller,
+  type ExecutionContext,
+  type INestApplication,
+  Injectable,
+  type NestInterceptor,
+  UseInterceptors,
+} from '@nestjs/common';
 import * as ms from '@nestjs/microservices';
 import {
   ClientProxy,
@@ -16,7 +24,7 @@ import { Test } from '@nestjs/testing';
 import { context, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
 import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
-import { lastValueFrom } from 'rxjs';
+import { from, lastValueFrom, map, type Observable, switchMap, timeout } from 'rxjs';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { OtelModule } from '../../src/index';
 import {
@@ -81,6 +89,36 @@ class UsersController {
   }
 }
 
+/** Defers the handler past an await, so it runs on the server's later subscription (Nest's interceptor chain). */
+@Injectable()
+class DeferInterceptor implements NestInterceptor {
+  intercept(_ctx: ExecutionContext, next: CallHandler): Observable<unknown> {
+    return from(new Promise((r) => setTimeout(r, 1))).pipe(
+      switchMap(() => next.handle()),
+      map((v) => ({ wrapped: v })),
+    );
+  }
+}
+
+@Controller()
+@UseInterceptors(DeferInterceptor)
+class InterceptedController {
+  // No @Ctx(): the transport comes from the addHandler hook, through the interceptor's lazy Observable.
+  @MessagePattern('intercepted')
+  handle(data: unknown): unknown {
+    return { seen: data };
+  }
+}
+
+@Controller()
+class SlowController {
+  @MessagePattern('slow')
+  async slow(): Promise<string> {
+    await new Promise((r) => setTimeout(r, 300));
+    return 'late';
+  }
+}
+
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
     const s = createServer();
@@ -118,7 +156,7 @@ beforeAll(async () => {
   port = await freePort();
   const moduleRef = await Test.createTestingModule({
     imports: [OtelModule.forRoot({ autoInstrument: { microservices: false } })],
-    controllers: [UsersController],
+    controllers: [UsersController, InterceptedController, SlowController],
   }).compile();
   // Patched before `connectMicroservice`, which registers the handlers (`Server.addHandler`) right away;
   // in an app, `OtelModule` patches during `NestFactory.create`, earlier still.
@@ -156,6 +194,7 @@ describe('microservices over TCP', () => {
       'messaging.operation.type': 'send',
       'nestjs.microservice.kind': 'message',
     });
+    expect(send.attributes['nestjs.microservice.cancelled']).toBeUndefined();
     const handler = await waitFor(() => byName('UsersController.get'));
     expect(handler.spanContext().traceId).toBe(send.spanContext().traceId);
     expect(parentId(handler)).toBe(send.spanContext().spanId);
@@ -215,6 +254,46 @@ describe('microservices over TCP', () => {
       'messaging.destination.name': 'm2',
       'nestjs.microservice.kind': 'message',
     });
+  });
+
+  it('an interceptor plus a handler without @Ctx() keeps the transport attributes', async () => {
+    expect(await lastValueFrom(client.send('intercepted', { id: 13 }))).toEqual({ wrapped: { seen: { id: 13 } } });
+    const span = await waitFor(() => byName('InterceptedController.handle'));
+    expect(span.kind).toBe(SpanKind.SERVER);
+    expect(span.attributes).toMatchObject({
+      'messaging.system': 'tcp',
+      'messaging.destination.name': 'intercepted',
+      'nestjs.microservice.kind': 'message',
+    });
+  });
+
+  it('timeout() before the reply marks the send span cancelled', async () => {
+    await expect(lastValueFrom(client.send('slow', {}).pipe(timeout(20)))).rejects.toThrow();
+    const send = await waitFor(() => byName('send slow'));
+    expect(send.attributes['nestjs.microservice.cancelled']).toBe(true);
+    expect(send.status.code).not.toBe(SpanStatusCode.ERROR);
+  });
+
+  it('subscriber callbacks run in the caller context, not the socket one', async () => {
+    let caller!: { spanContext(): { spanId: string } };
+    await new Promise<void>((resolve, reject) => {
+      tracer().startActiveSpan('caller', (span) => {
+        caller = span;
+        client.send('users.get', { id: 14 }).subscribe({
+          next: () => {
+            tracer().startSpan('in-next').end();
+          },
+          error: reject,
+          complete: () => {
+            tracer().startSpan('in-complete').end();
+            resolve();
+          },
+        });
+        span.end();
+      });
+    });
+    expect(parentId(byName('in-next'))).toBe(caller.spanContext().spanId);
+    expect(parentId(byName('in-complete'))).toBe(caller.spanContext().spanId);
   });
 
   it('several event handlers for one pattern all run', async () => {
@@ -321,6 +400,27 @@ describe('microservices over TCP', () => {
       const md = received[0]?.metadata as Record<string, unknown>;
       expect(md).toMatchObject({ tenant: 't1' });
       expect(md.traceparent).toEqual(expect.stringMatching(/^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/));
+    } finally {
+      hooked.close();
+    }
+  });
+
+  it.runIf(hasHook)('a traceparent set by the dispatch hook is not overwritten', async () => {
+    const fixed = '00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01';
+    const hooked = newClient();
+    (hooked as any).setOnDispatchHook((p: any) => {
+      p.metadata = { traceparent: fixed };
+    });
+    try {
+      received.length = 0;
+      await tracer().startActiveSpan('caller', async (caller) => {
+        await lastValueFrom(hooked.send('users.get', { id: 15 }));
+        caller.end();
+      });
+      expect((received[0]?.metadata as Record<string, unknown>).traceparent).toBe(fixed);
+      const handler = await waitFor(() => byName('UsersController.get'));
+      expect(handler.spanContext().traceId).toBe('0af7651916cd43dd8448eb211c80319c');
+      expect(parentId(handler)).toBe('b7ad6b7169203331');
     } finally {
       hooked.close();
     }

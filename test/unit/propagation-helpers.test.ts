@@ -24,6 +24,13 @@ describe('propagation helpers', () => {
     });
   });
 
+  it('injectContext keeps the carrier type', () => {
+    const headers: { 'content-type': string } & Record<string, unknown> = { 'content-type': 'json' };
+    // Compile-time: the result is the carrier's own type, not Record<string, unknown>.
+    const out: { 'content-type': string } = injectContext(headers);
+    expect(out['content-type']).toBe('json');
+  });
+
   it('injectContext keeps existing keys and returns the same object', () => {
     const carrier = { keep: 'me' };
     trace.getTracer('t').startActiveSpan('S', (span) => {

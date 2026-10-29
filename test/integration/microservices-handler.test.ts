@@ -260,6 +260,37 @@ describe('microservice handler spans', () => {
   });
 });
 
+describe('handler instruments per MeterProvider', () => {
+  it('a MeterProvider registered later gets the handler metrics', async () => {
+    const c = await build();
+    c.order({}, new KafkaContext('orders.before'));
+    const laterExporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
+    const laterReader = new PeriodicExportingMetricReader({ exporter: laterExporter, exportIntervalMillis: 3_600_000 });
+    const later = new MeterProvider({ readers: [laterReader] });
+    metrics.disable();
+    metrics.setGlobalMeterProvider(later);
+    try {
+      c.order({}, new KafkaContext('orders.later'));
+      c.order({}, new KafkaContext('orders.later'));
+      await laterReader.forceFlush();
+      const pts = laterExporter
+        .getMetrics()
+        .flatMap((rm) => rm.scopeMetrics.flatMap((sm) => sm.metrics))
+        .filter((m) => m.descriptor.name === 'messaging.process.duration')
+        .flatMap((m) => m.dataPoints as DataPoint<unknown>[]);
+      expect(pts.map((p) => [p.attributes['messaging.destination.name'], (p.value as Histogram).count])).toEqual([
+        ['orders.later', 2],
+      ]);
+    } finally {
+      await later.shutdown();
+      metrics.disable();
+      metrics.setGlobalMeterProvider(provider);
+    }
+    c.order({}, new KafkaContext('orders.after'));
+    expect(await points('messaging.process.duration', 'orders.after')).toHaveLength(1);
+  });
+});
+
 describe('payload capture modes', () => {
   it("captureData: 'always' records data on success, redacted", async () => {
     const c = await build({ microservices: { captureData: 'always' } });
@@ -344,6 +375,16 @@ describe('@ssut/nestjs-sqs handlers', () => {
     expect(span.parentSpanContext).toBeUndefined();
   });
 
+  it('no trace attributes gives a root even inside an active span', () => {
+    trace.getTracer('test').startActiveSpan('ambient', (amb) => {
+      c.handle({ MessageId: 'm5', Body: '{}', MessageAttributes: { other: { DataType: 'String', StringValue: 'x' } } });
+      amb.end();
+    });
+    const span = byName('SqsConsumer.handle')!;
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.spanContext().traceId).not.toBe(byName('ambient')!.spanContext().traceId);
+  });
+
   it('batch: links', () => {
     const a = producer();
     const b = producer();
@@ -382,6 +423,7 @@ describe('@ssut/nestjs-sqs handlers', () => {
     });
     const span = byName('SqsConsumer.handleBatch')!;
     expect(span.links.map((l) => l.context.spanId)).toEqual([a.p.spanContext().spanId]);
+    expect(span.parentSpanContext).toBeUndefined();
   });
 
   it('metadata survives wrapping', () => {
