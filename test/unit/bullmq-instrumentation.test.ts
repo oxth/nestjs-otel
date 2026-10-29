@@ -281,6 +281,16 @@ describe('metrics', () => {
     expect(await points('bullmq.job.wait_time')).toHaveLength(0);
   });
 
+  it('histograms use second-based bucket boundaries', async () => {
+    await runWorker(new mod.Worker(), jobOf());
+    const [duration] = await points('messaging.process.duration');
+    const [wait] = await points('bullmq.job.wait_time');
+    expect(duration.value.buckets.boundaries).toEqual([
+      0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10,
+    ]);
+    expect(wait.value.buckets.boundaries).toEqual([0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 3600]);
+  });
+
   it('skipped under app telemetry with a meter, spans still attributed', async () => {
     const w = new mod.Worker({ telemetry: { tracer: {}, contextManager: {}, meter: {} } });
     w.impl = async () => {

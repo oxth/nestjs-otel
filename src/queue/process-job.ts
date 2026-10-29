@@ -25,13 +25,23 @@ function controlFlowOutcome(err: unknown): Outcome | undefined {
   return (err as { message?: unknown } | null)?.message === 'bullmq:rateLimitExceeded' ? 'rate-limited' : undefined;
 }
 
+/** Second-based bucket boundaries; the SDK defaults are tuned for milliseconds. */
+export const PROCESS_DURATION_BUCKETS = [0.005, 0.01, 0.025, 0.05, 0.075, 0.1, 0.25, 0.5, 0.75, 1, 2.5, 5, 7.5, 10];
+export const WAIT_TIME_BUCKETS = [0.01, 0.05, 0.1, 0.5, 1, 5, 10, 30, 60, 300, 900, 3600];
+
 function instruments() {
   const meter = metrics.getMeter(SCOPE_NAME);
   return {
     completed: meter.createCounter('bullmq.jobs.completed'),
     failed: meter.createCounter('bullmq.jobs.failed'),
-    duration: meter.createHistogram('messaging.process.duration', { unit: 's' }),
-    wait: meter.createHistogram('bullmq.job.wait_time', { unit: 's' }),
+    duration: meter.createHistogram('messaging.process.duration', {
+      unit: 's',
+      advice: { explicitBucketBoundaries: PROCESS_DURATION_BUCKETS },
+    }),
+    wait: meter.createHistogram('bullmq.job.wait_time', {
+      unit: 's',
+      advice: { explicitBucketBoundaries: WAIT_TIME_BUCKETS },
+    }),
   };
 }
 
@@ -109,6 +119,8 @@ function finish(
  */
 export function runProcessJob<T>(worker: any, job: any, run: () => Promise<T>): Promise<T> {
   const startedAt = Date.now();
+  // The active span is BullMQ's `process` span: BullMQ runs `callProcessJob` inside it, whether the telemetry
+  // is the library's adapter or an app-supplied `bullmq-otel`.
   const span = safely<Span | undefined>('bullmq active span', () => trace.getSpan(context.active()), undefined);
   const attempt = safely('bullmq attempt', () => Number(job?.attemptsMade ?? 0) + 1, 1);
   const max = safely('bullmq max attempts', () => Number(job?.opts?.attempts ?? 1), 1);
