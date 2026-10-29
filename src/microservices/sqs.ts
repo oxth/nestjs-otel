@@ -1,4 +1,4 @@
-import { type Link, ROOT_CONTEXT, SpanKind, trace } from '@opentelemetry/api';
+import { type Link, propagation, ROOT_CONTEXT, SpanKind, trace } from '@opentelemetry/api';
 import { extractContext } from '../propagation/helpers';
 import { safely } from '../shared/safe';
 import type { CallDescription, WrapOptions } from '../tracing/wrap';
@@ -13,15 +13,20 @@ interface SqsMessage {
   MessageAttributes?: Record<string, { StringValue?: unknown } | undefined>;
 }
 
+/**
+ * The message attributes named by the global propagator's fields (W3C by default, or whatever
+ * `OTEL_PROPAGATORS` selects), as a carrier; undefined when none is present.
+ */
 function carrierOf(message: SqsMessage | undefined): Record<string, unknown> | undefined {
   const attrs = message?.MessageAttributes;
   if (!attrs || typeof attrs !== 'object') return undefined;
   const carrier: Record<string, unknown> = {};
-  for (const key of ['traceparent', 'tracestate', 'baggage']) {
+  for (const key of propagation.fields()) {
+    if (!Object.hasOwn(attrs, key)) continue;
     const v = attrs[key]?.StringValue;
     if (typeof v === 'string') carrier[key] = v;
   }
-  return carrier.traceparent === undefined ? undefined : carrier;
+  return Object.keys(carrier).length > 0 ? carrier : undefined;
 }
 
 function parseBody(body: unknown): unknown {
@@ -71,12 +76,15 @@ export function describeSqsHandler(owner: object, name: string): Pick<WrapOption
             if (sc && trace.isSpanContextValid(sc)) links.push({ context: sc });
           }
           if (links.length > 0) result.links = links;
+          // No parent: each message's producer is a link, and the batch is a new root.
+          result.parent = ROOT_CONTEXT;
           call.payload = { value: messages.map((m) => parseBody(m?.Body)) };
         } else {
           const message = args[0] as SqsMessage | undefined;
           if (message?.MessageId !== undefined) attributes['messaging.message.id'] = String(message.MessageId);
+          // An entry point: the producer's context, or a new root (never the ambient context).
           const carrier = carrierOf(message);
-          if (carrier) result.parent = extractContext(carrier, ROOT_CONTEXT);
+          result.parent = carrier ? extractContext(carrier, ROOT_CONTEXT) : ROOT_CONTEXT;
           if (message && typeof message === 'object') call.payload = { value: parseBody(message.Body) };
         }
         return result;

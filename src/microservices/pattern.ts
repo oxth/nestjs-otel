@@ -14,9 +14,13 @@ function sortKeys(v: unknown): unknown {
   return v;
 }
 
-/** String patterns as-is, otherwise JSON with keys sorted recursively. Never throws. */
+/**
+ * String patterns as-is, a RegExp as its literal (`String(re)`), otherwise JSON with keys sorted
+ * recursively. Never throws.
+ */
 export function patternToString(p: unknown): string {
   if (typeof p === 'string') return p;
+  if (p instanceof RegExp) return safeString(p);
   return safely('patternToString', () => JSON.stringify(sortKeys(p)) ?? String(p), safeString(p));
 }
 
@@ -47,18 +51,36 @@ const CONTEXTS: Record<string, string> = {
   MqttContext: 'mqtt',
 };
 
-function ctorName(o: unknown): string | undefined {
-  return safely('ctorName', () => (o as { constructor?: { name?: string } } | null)?.constructor?.name, undefined);
+/** Bounds the prototype walk (a subclass chain is never this deep in practice). */
+const MAX_DEPTH = 16;
+
+/**
+ * The system of the first class in `o`'s prototype chain whose name is in `table`, so a subclass
+ * (`class MyKafka extends ClientKafka`) maps like its base. Never throws.
+ */
+function systemOf(o: unknown, table: Record<string, string>): string | undefined {
+  return safely(
+    'systemOf',
+    () => {
+      if (o === null || typeof o !== 'object') return undefined;
+      let proto: unknown = Object.getPrototypeOf(o);
+      for (let i = 0; i < MAX_DEPTH && proto !== null && proto !== Object.prototype; i++) {
+        const name = (proto as { constructor?: { name?: unknown } }).constructor?.name;
+        if (typeof name === 'string' && Object.hasOwn(table, name)) return table[name];
+        proto = Object.getPrototypeOf(proto);
+      }
+      return undefined;
+    },
+    undefined,
+  );
 }
 
 export function systemOfClient(client: object): string {
-  const n = ctorName(client);
-  return (n !== undefined && Object.hasOwn(CLIENTS, n) ? CLIENTS[n] : undefined) ?? 'nestjs';
+  return systemOf(client, CLIENTS) ?? 'nestjs';
 }
 
 export function systemOfContext(ctx: unknown): string | undefined {
-  const n = ctorName(ctx);
-  return n !== undefined && Object.hasOwn(CONTEXTS, n) ? CONTEXTS[n] : undefined;
+  return systemOf(ctx, CONTEXTS);
 }
 
 /** The RPC context of the message being handled, set by the `Server.addHandler` patch. */

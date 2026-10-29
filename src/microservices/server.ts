@@ -1,4 +1,4 @@
-import { type Context, context, ROOT_CONTEXT } from '@opentelemetry/api';
+import { type Context, context, propagation, ROOT_CONTEXT } from '@opentelemetry/api';
 import { isObservable, Observable } from 'rxjs';
 import { type MethodWrapper, patchMethods, unpatchMethods } from '../orm/patch';
 import { extractContext } from '../propagation/helpers';
@@ -7,6 +7,15 @@ import { findRpcContext, RPC_CONTEXT_KEY } from './pattern';
 
 const HANDLE_MESSAGE = ['handleMessage'] as const;
 const ADD_HANDLER = ['addHandler'] as const;
+
+/**
+ * True when `text` mentions a field of the global propagator (`traceparent` for W3C, `x-b3-traceid`
+ * or `b3` for B3, ...). Read per message, so a propagator set after patching is honoured.
+ */
+function mentionsCarrierField(text: string): boolean {
+  const fields = propagation.fields();
+  return Array.isArray(fields) && fields.some((f) => typeof f === 'string' && f !== '' && text.includes(f));
+}
 
 const protoOf = (ms: any, name: string): object | undefined =>
   safely(`microservices ${name}`, () => ms?.[name]?.prototype, undefined);
@@ -37,14 +46,14 @@ function redisMessage(server: any, buffer: unknown): unknown {
     'read redis message',
     () => {
       const text = typeof buffer === 'string' ? buffer : Buffer.isBuffer(buffer) ? buffer.toString() : undefined;
-      if (text === undefined || !text.includes('traceparent')) return undefined;
+      if (text === undefined || !mentionsCarrierField(text)) return undefined;
       return typeof server?.parseMessage === 'function' ? server.parseMessage(buffer) : JSON.parse(text);
     },
     undefined,
   );
 }
 
-/** `ServerRedis.handleMessage(channel, buffer, pub, pattern)`: parsed only when it carries a context. */
+/** `ServerRedis.handleMessage(channel, buffer, pub, pattern)`: parsed only when it may carry a context. */
 const redisWrapper: MethodWrapper = (original) =>
   function (this: any, channel: unknown, buffer: unknown, ...rest: unknown[]) {
     const ctx = incomingContext(redisMessage(this, buffer));
@@ -108,6 +117,17 @@ const addHandlerWrapper: MethodWrapper = (original) =>
     return original.call(this, pattern, handler, ...rest);
   };
 
+/**
+ * Nest 12's `ServerKafka.addHandler` stores RegExp patterns itself and only passes other patterns to
+ * `super.addHandler` (already wrapped above), so it wraps RegExp handlers only.
+ */
+const kafkaAddHandlerWrapper: MethodWrapper = (original) => {
+  const wrapped = addHandlerWrapper(original, 'addHandler');
+  return function (this: any, pattern: unknown, ...rest: unknown[]) {
+    return pattern instanceof RegExp ? wrapped.call(this, pattern, ...rest) : original.call(this, pattern, ...rest);
+  };
+};
+
 export function patchServers(ms: any): void {
   safely(
     'patch microservice servers',
@@ -115,6 +135,8 @@ export function patchServers(ms: any): void {
       patchMethods(protoOf(ms, 'ServerTCP'), HANDLE_MESSAGE, tcpWrapper);
       patchMethods(protoOf(ms, 'ServerRedis'), HANDLE_MESSAGE, redisWrapper);
       patchMethods(protoOf(ms, 'Server'), ADD_HANDLER, addHandlerWrapper);
+      // Nest 11's ServerKafka inherits addHandler; only an own override is patched.
+      patchMethods(protoOf(ms, 'ServerKafka'), ADD_HANDLER, kafkaAddHandlerWrapper, { ownOnly: true });
     },
     undefined,
   );
@@ -127,6 +149,7 @@ export function unpatchServers(ms: any): void {
       unpatchMethods(protoOf(ms, 'ServerTCP'), HANDLE_MESSAGE);
       unpatchMethods(protoOf(ms, 'ServerRedis'), HANDLE_MESSAGE);
       unpatchMethods(protoOf(ms, 'Server'), ADD_HANDLER);
+      unpatchMethods(protoOf(ms, 'ServerKafka'), ADD_HANDLER);
     },
     undefined,
   );
