@@ -135,6 +135,7 @@
     "@types/supertest": "^7.2.1",
     "autocannon": "^8.0.0",
     "bullmq": "^6.5.1",
+    "bullmq-5": "npm:bullmq@5.24.0",
     "bullmq-otel": "^2.0.1",
     "ioredis": "^5.11.1",
     "nestjs-pino": "^5.3.1",

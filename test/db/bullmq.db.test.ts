@@ -1,4 +1,4 @@
-import { metrics, SpanKind, SpanStatusCode, propagation, trace } from '@opentelemetry/api';
+import { context, metrics, SpanKind, SpanStatusCode, propagation, trace } from '@opentelemetry/api';
 import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import {
   AggregationTemporality,
@@ -7,7 +7,7 @@ import {
   PeriodicExportingMetricReader,
 } from '@opentelemetry/sdk-metrics';
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
-import * as bullmq from 'bullmq';
+import { createRequire } from 'node:module';
 import { BullMQOtel } from 'bullmq-otel';
 import { Redis } from 'ioredis';
 import { afterAll, afterEach, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -16,6 +16,13 @@ import { setupInMemoryTracing } from '../integration/helpers/tracing';
 
 const SECRET = 'hunter2-SECRET';
 const urls = inject('dbUrls');
+
+// `BULLMQ_VERSION` (as for the spawned fixture) picks the BullMQ this in-process suite loads:
+// major 5 → the `bullmq-5` alias (pinned to 5.24.0, the supported floor), anything else → `bullmq` (v6).
+const BULLMQ_MAJOR = Number(/\d+/.exec(process.env.BULLMQ_VERSION ?? '6')?.[0] ?? 6);
+const BULLMQ_MODULE = BULLMQ_MAJOR === 5 ? 'bullmq-5' : 'bullmq';
+const BULLMQ_LOADED_VERSION: string = createRequire(import.meta.url)(`${BULLMQ_MODULE}/package.json`).version;
+let bullmq: any;
 
 const t = setupInMemoryTracing();
 const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
@@ -55,7 +62,9 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
   let connection: Redis;
   const tracer = () => trace.getTracer('test');
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    bullmq = await import(BULLMQ_MODULE);
+    console.info(`bullmq.db.test: ${BULLMQ_MODULE}@${BULLMQ_LOADED_VERSION}`);
     propagation.setGlobalPropagator(new W3CTraceContextPropagator());
     metrics.disable();
     metrics.setGlobalMeterProvider(provider);
@@ -74,13 +83,21 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     await Promise.allSettled(closers.splice(0).reverse().map((c) => c()));
   });
 
+  it(`loads the BullMQ selected by BULLMQ_VERSION (${BULLMQ_MODULE}@${BULLMQ_LOADED_VERSION})`, () => {
+    expect(BULLMQ_LOADED_VERSION.split('.')[0]).toBe(String(BULLMQ_MAJOR));
+    if (BULLMQ_MAJOR === 5) expect(BULLMQ_LOADED_VERSION).toBe('5.24.0');
+    // The patch landed on the module this suite uses.
+    expect(bullmq.QueueBase.prototype.trace).not.toBe(undefined);
+    expect(Object.hasOwn(bullmq.FlowProducer.prototype, 'telemetry')).toBe(true);
+  });
+
   const qname = () => `emails-${++n}`;
   const queue = (name: string, opts: Record<string, unknown> = {}) => {
     const q = new bullmq.Queue(name, { connection, ...opts });
     closers.push(() => q.close());
     return q;
   };
-  const worker = (name: string, proc: (job: bullmq.Job, token?: string) => Promise<unknown>, opts = {}) => {
+  const worker = (name: string, proc: (job: any, token?: string) => Promise<unknown>, opts = {}) => {
     const w = new bullmq.Worker(name, proc, { connection, drainDelay: 1, stalledInterval: 500, ...opts });
     closers.push(() => w.close());
     return w;
@@ -104,7 +121,8 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     expect(parentId(proc)).toBe(add.spanContext().spanId);
     expect(proc.spanContext().traceId).toBe(caller.spanContext().traceId);
     expect(proc.attributes['messaging.message.id']).toBeDefined();
-    expect(proc.attributes['bullmq.job.name']).toBe('send');
+    // BullMQ 5.24 does not set `bullmq.job.name` on its `process` span; v6 does.
+    expect(proc.attributes['bullmq.job.name']).toBe(BULLMQ_MAJOR >= 6 ? 'send' : undefined);
     expect(proc.attributes['bullmq.job.outcome']).toBe('completed');
   });
 
@@ -147,6 +165,10 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     const trace = flowSpan.spanContext().traceId;
     expect(named(`process ${childQ}`)(spans)[0].spanContext().traceId).toBe(trace);
     expect(named(`process ${parentQ}`)(spans)[0].spanContext().traceId).toBe(trace);
+    // addNode spans keep BullMQ's `addNode <queue>` name on both majors (5.24 passes the job name as queue name).
+    const childNode = spans.find((s) => s.name === `addNode ${childQ}`);
+    expect(childNode?.attributes['messaging.destination.name']).toBe(childQ);
+    expect(spans.some((s) => s.name === 'addNode child' || s.name === 'addNode parent')).toBe(false);
   });
 
   it('idle worker records no spans', async () => {
@@ -174,6 +196,8 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     expect(procs.map((p) => p.attributes['bullmq.job.attempt'])).toEqual([1, 2]);
     expect(procs.map((p) => p.attributes['bullmq.job.will_retry'])).toEqual([true, false]);
     for (const p of procs) {
+      // Both attempts are children of `add` (5.24's retry rewrites the job metadata; see getMetadata).
+      expect(parentId(p)).toBe(add.spanContext().spanId);
       expect(p.spanContext().traceId).toBe(add.spanContext().traceId);
       expect(p.status.code).toBe(SpanStatusCode.ERROR);
       const ex = p.events.find((e) => e.name === 'exception');
@@ -235,21 +259,97 @@ describe.skipIf(!urls)('bullmq against Redis', () => {
     expect(parentId(proc)).toBe(adds[0].spanContext().spanId);
   });
 
-  it('worker created inside a span does not adopt it', async () => {
+  /**
+   * A Queue whose (app-supplied, so never replaced) telemetry records nothing and propagates no context:
+   * its jobs carry no trace metadata on every BullMQ major (5.24 ignores `telemetry.omitContext`).
+   */
+  const contextlessQueue = (name: string) => {
+    const span = {
+      setSpanOnContext: (ctx: unknown) => ctx ?? context.active(),
+      setAttribute: () => span,
+      setAttributes: () => span,
+      addEvent: () => span,
+      recordException: () => {},
+      end: () => {},
+    };
+    return queue(name, {
+      telemetry: {
+        tracer: { startSpan: () => span },
+        contextManager: {
+          with: (ctx: any, fn: () => unknown) => context.with(ctx, fn),
+          active: () => context.active(),
+          getMetadata: () => '',
+          fromMetadata: (ctx: unknown) => ctx,
+        },
+      },
+    });
+  };
+
+  it('worker created inside a span does not adopt it; the processor runs under process', async () => {
     const q = qname();
-    const queueI = queue(q);
+    const queueI = contextlessQueue(q);
     await tracer().startActiveSpan('boot', async (span) => {
-      worker(q, async () => 'ok');
+      worker(q, async () => {
+        tracer().startSpan('EmailsProcessor.process').end();
+        return 'ok';
+      });
       span.end();
     });
     await new Promise((r) => setTimeout(r, 100));
+    const job = await queueI.add('send', {});
+    expect(job.opts.telemetryMetadata ?? job.opts.telemetry?.metadata).toBeFalsy();
+    const spans = await waitForSpans((s) => s.some((x) => x.name === `process ${q}`) && s.some((x) => x.name === 'EmailsProcessor.process'));
+    const boot = spans.find((s) => s.name === 'boot')!;
+    const proc = spans.find((s) => s.name === `process ${q}`)!;
+    const child = spans.find((s) => s.name === 'EmailsProcessor.process')!;
     // No propagated context: the only way `process` could get a parent is the worker's creation context.
+    expect(parentId(proc)).toBeUndefined();
+    expect(proc.spanContext().traceId).not.toBe(boot.spanContext().traceId);
+    // The processor runs under `process` (BullMQ 5.24 passes no context to setSpanOnContext here).
+    expect(parentId(child)).toBe(proc.spanContext().spanId);
+    expect(proc.attributes['bullmq.job.outcome']).toBe('completed');
+    expect(proc.attributes['bullmq.job.attempt']).toBe(1);
+  });
+
+  it.runIf(BULLMQ_MAJOR >= 6)('v6 telemetry.omitContext: process is a root under the process span', async () => {
+    const q = qname();
+    const queueI = queue(q);
+    await tracer().startActiveSpan('boot', async (span) => {
+      worker(q, async () => {
+        tracer().startSpan('EmailsProcessor.process').end();
+        return 'ok';
+      });
+      span.end();
+    });
+    await new Promise((r) => setTimeout(r, 100));
     await queueI.add('send', {}, { telemetry: { omitContext: true } });
-    const spans = await waitForSpans((s) => s.some((x) => x.name === `process ${q}`));
+    const spans = await waitForSpans((s) => s.some((x) => x.name === `process ${q}`) && s.some((x) => x.name === 'EmailsProcessor.process'));
     const boot = spans.find((s) => s.name === 'boot')!;
     const proc = spans.find((s) => s.name === `process ${q}`)!;
     expect(parentId(proc)).toBeUndefined();
     expect(proc.spanContext().traceId).not.toBe(boot.spanContext().traceId);
+    expect(parentId(spans.find((s) => s.name === 'EmailsProcessor.process')!)).toBe(proc.spanContext().spanId);
+  });
+
+  it('after pause() and resume() the processor is still recorded', async () => {
+    const q = qname();
+    const queueI = queue(q);
+    const w = worker(q, async () => {
+      tracer().startSpan('EmailsProcessor.process').end();
+      return 'ok';
+    });
+    await w.waitUntilReady();
+    await w.pause();
+    // v6 restarts the main loop inside the non-recorded (suppressed) `resume` operation.
+    w.resume();
+    await new Promise((r) => setTimeout(r, 100));
+    await queueI.add('send', {});
+    const spans = await waitForSpans((s) => s.some((x) => x.name === `process ${q}`) && s.some((x) => x.name === 'EmailsProcessor.process'));
+    const add = spans.find((s) => s.name === `add ${q}`)!;
+    const proc = spans.find((s) => s.name === `process ${q}`)!;
+    expect(parentId(proc)).toBe(add.spanContext().spanId);
+    expect(parentId(spans.find((s) => s.name === 'EmailsProcessor.process')!)).toBe(proc.spanContext().spanId);
+    expect(proc.attributes['bullmq.job.outcome']).toBe('completed');
   });
 
   it('metrics', async () => {
