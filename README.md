@@ -269,10 +269,11 @@ allow-list with `OTEL_NODE_ENABLED_INSTRUMENTATIONS`.
 
 ### Testing (contributors)
 
-`pnpm test:db` runs the database suite against real database containers (testcontainers), so it needs Docker.
-Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure (CI sets it). Select versions with
-`NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`) and `MIKRO_VERSION` (default `^7`), e.g.
-`NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 pnpm test:db`.
+`pnpm test:db` runs the Docker suite (databases and BullMQ) against real containers (testcontainers: Postgres, MySQL,
+MongoDB, Redis), so it needs Docker. Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure
+(CI sets it). Select versions with `NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`), `MIKRO_VERSION`
+(default `^7`) and `BULLMQ_VERSION` (default `^6.5.1`; `@nestjs/bullmq` follows the Nest major), e.g.
+`NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 BULLMQ_VERSION=5.24.0 pnpm test:db`.
 
 ## Queues (BullMQ)
 
@@ -373,12 +374,6 @@ child. Only the `process` span in the parent is recorded.
 ### Disabling
 
 Turn off by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS=bullmq`.
-
-### Testing (contributors)
-
-`pnpm test:db` also runs the BullMQ suite against a Redis container. Select the BullMQ version with
-`BULLMQ_VERSION` (default `^6.5.1`), e.g. `BULLMQ_VERSION=5.24.0 pnpm test:db`; `@nestjs/bullmq` follows the Nest
-major.
 
 ## Decorators, `TraceService` and `MetricService`
 

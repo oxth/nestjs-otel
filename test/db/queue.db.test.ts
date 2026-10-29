@@ -30,15 +30,15 @@ describe.skipIf(!urls)('queues (bullmq)', () => {
       const app = await start();
       expect((await app.post('/jobs', { to: 'a@b.c' })).status).toBe(201);
       const processor = await receiver.waitFor(named('EmailsProcessor.process'));
-      const enqueue = receiver.spans().find((s) => s.name === 'JobsService.enqueue')!;
-      const add = receiver.spans().find((s) => s.name === 'add emails')!;
-      const proc = receiver.spans().find((s) => s.name === 'process emails')!;
-      expect(enqueue).toBeDefined();
+      const enqueue = await receiver.waitFor(named('JobsService.enqueue'));
+      const add = await receiver.waitFor(named('add emails'));
+      const proc = await receiver.waitFor(named('process emails'));
       expect(add.parentSpanId).toBe(enqueue.spanId);
       expect(proc.parentSpanId).toBe(add.spanId);
       expect(processor.parentSpanId).toBe(proc.spanId);
-      const server = receiver.spans().find((s) => s.name.startsWith('POST') && s.traceId === enqueue.traceId)!;
-      expect(server).toBeDefined();
+      const server = await receiver.waitFor(
+        () => receiver.spans().find((s) => s.name.startsWith('POST') && s.traceId === enqueue.traceId),
+      );
       for (const s of [enqueue, add, proc, processor]) expect(s.traceId).toBe(server.traceId);
     });
 
@@ -73,11 +73,10 @@ describe.skipIf(!urls)('queues (bullmq)', () => {
     it('job metrics exported', async () => {
       const app = await start();
       expect((await app.post('/jobs', { to: 'a@b.c' })).status).toBe(201);
-      await receiver.waitFor(
-        () =>
-          receiver.metricNames().includes('bullmq.jobs.completed') &&
-          receiver.metricNames().includes('messaging.process.duration'),
-      );
+      for (const name of ['bullmq.jobs.completed', 'messaging.process.duration'])
+        await receiver.waitFor(() =>
+          receiver.metricPoints(name).some((p) => p.attributes['messaging.destination.name'] === 'emails'),
+        );
       await app.stop();
     });
   });
