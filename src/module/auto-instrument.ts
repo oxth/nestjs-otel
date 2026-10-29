@@ -1,6 +1,7 @@
 import { ModuleRef, type ModulesContainer } from '@nestjs/core';
 import { applyFailureContext } from '../http/failure-context';
 import { describeHandler } from '../microservices/handler';
+import { describeSqsHandler } from '../microservices/sqs';
 import { NO_CAPTURE_BODY_META } from '../http/no-capture-body.decorator';
 import { safely } from '../shared/safe';
 import { getClassifyDefaults, getSpanParamAttributes, NO_TRACE_META, TRACE_META } from '../tracing/decorators';
@@ -162,14 +163,17 @@ function instrumentClass(
     const isCanActivate = role === 'guard' && name === 'canActivate';
     if (isCanActivate && errorRecording.has(fn)) continue;
 
+    // SQS handlers live on providers (or controllers); the decorator metadata marks them explicitly.
+    const sqs = role === 'controller' || role === 'provider' ? describeSqsHandler(owner, name) : undefined;
     let next = fn;
-    if ((enabled || hasMeta(TRACE_META, fn)) && !isWrapped(fn)) {
+    if ((enabled || sqs || hasMeta(TRACE_META, fn)) && !isWrapped(fn)) {
       next = wrapMethod(fn, {
         spanName: `${className}.${name}`,
         attributes: { 'code.namespace': className, 'code.function': name },
         paramAttributes: safely('read span attributes', () => getSpanParamAttributes(owner, name), undefined),
         classify: getClassifyDefaults,
         ...(role === 'controller' && describeHandler(owner, name)),
+        ...sqs,
       });
       wrapped.push(`${className}.${name}`);
     }

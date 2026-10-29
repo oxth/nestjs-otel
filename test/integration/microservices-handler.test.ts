@@ -1,7 +1,8 @@
-import { BadRequestException, Controller, Get } from '@nestjs/common';
+import { BadRequestException, Controller, Get, Injectable, SetMetadata } from '@nestjs/common';
 import { EventPattern, MessagePattern, RpcException } from '@nestjs/microservices';
 import { Test } from '@nestjs/testing';
-import { metrics, SpanKind, SpanStatusCode } from '@opentelemetry/api';
+import { context, metrics, propagation, SpanKind, SpanStatusCode, trace } from '@opentelemetry/api';
+import { W3CTraceContextPropagator } from '@opentelemetry/core';
 import {
   AggregationTemporality,
   type DataPoint,
@@ -13,11 +14,12 @@ import {
 import type { ReadableSpan } from '@opentelemetry/sdk-trace-base';
 import { lastValueFrom, type Observable, of } from 'rxjs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type OtelModuleOptions, OtelModule } from '../../src/index';
+import { injectContext, type OtelModuleOptions, OtelModule } from '../../src/index';
 import { describeHandler } from '../../src/microservices/handler';
 import { setupInMemoryTracing } from './helpers/tracing';
 
 const t = setupInMemoryTracing();
+propagation.setGlobalPropagator(new W3CTraceContextPropagator());
 const exporter = new InMemoryMetricExporter(AggregationTemporality.CUMULATIVE);
 const reader = new PeriodicExportingMetricReader({ exporter, exportIntervalMillis: 3_600_000 });
 const provider = new MeterProvider({ readers: [reader] });
@@ -282,5 +284,94 @@ describe('payload capture modes', () => {
     const span = byName('RpcController.fail')!;
     expect(Buffer.byteLength(String(span.attributes['nestjs.microservice.data']))).toBeLessThanOrEqual(8);
     expect(span.attributes['nestjs.microservice.data.truncated']).toBe(true);
+  });
+});
+
+const SQS = Symbol.for('SQS_CONSUMER_METHOD');
+
+@Injectable()
+class SqsConsumer {
+  @SetMetadata(SQS, { name: 'orders' })
+  handle(message: { MessageId?: string; Body?: string; MessageAttributes?: unknown }): void {
+    if (message.Body?.includes('boom')) throw new Error('fail');
+  }
+
+  @SetMetadata(SQS, { name: 'orders', batch: true })
+  handleBatch(_messages: unknown[]): void {}
+}
+
+describe('@ssut/nestjs-sqs handlers', () => {
+  let c: SqsConsumer;
+  beforeAll(async () => {
+    const moduleRef = await Test.createTestingModule({
+      imports: [OtelModule.forRoot()],
+      providers: [SqsConsumer],
+    }).compile();
+    c = moduleRef.get(SqsConsumer);
+  });
+  beforeEach(() => t.reset());
+
+  const attrsFrom = (span: { spanContext(): unknown }) => {
+    const carrier = injectContext({}, trace.setSpan(context.active(), span as never)) as Record<string, string>;
+    return { traceparent: { DataType: 'String', StringValue: carrier.traceparent! } };
+  };
+  const producer = () => {
+    const tracer = trace.getTracer('test');
+    const p = tracer.startSpan('P');
+    const attrs = attrsFrom(p);
+    p.end();
+    return { p, attrs };
+  };
+
+  it('single message: parent comes from MessageAttributes', () => {
+    const { p, attrs } = producer();
+    c.handle({ MessageId: 'm1', Body: '{"password":"p"}', MessageAttributes: attrs });
+    const span = byName('SqsConsumer.handle')!;
+    expect(span.kind).toBe(SpanKind.CONSUMER);
+    expect(span.spanContext().traceId).toBe(p.spanContext().traceId);
+    expect(span.parentSpanContext?.spanId).toBe(p.spanContext().spanId);
+    expect(span.attributes).toMatchObject({
+      'messaging.system': 'aws_sqs',
+      'messaging.destination.name': 'orders',
+      'messaging.operation.type': 'process',
+      'messaging.message.id': 'm1',
+    });
+  });
+
+  it('no attributes gives a root', () => {
+    c.handle({ MessageId: 'm2', Body: '{}' });
+    const span = byName('SqsConsumer.handle')!;
+    expect(span.parentSpanContext).toBeUndefined();
+  });
+
+  it('batch: links', () => {
+    const a = producer();
+    const b = producer();
+    c.handleBatch([
+      { MessageId: '1', Body: '{}', MessageAttributes: a.attrs },
+      { MessageId: '2', Body: '{}' },
+      { MessageId: '3', Body: '{}', MessageAttributes: b.attrs },
+    ]);
+    const span = byName('SqsConsumer.handleBatch')!;
+    expect(span.parentSpanContext).toBeUndefined();
+    expect(span.links.map((l) => l.context.spanId)).toEqual([a.p.spanContext().spanId, b.p.spanContext().spanId]);
+    expect(span.attributes['messaging.batch.message_count']).toBe(3);
+  });
+
+  it('failure captures the redacted Body', () => {
+    expect(() => c.handle({ MessageId: 'm3', Body: '{"password":"p","boom":1}' })).toThrow('fail');
+    let data = String(byName('SqsConsumer.handle')!.attributes['nestjs.microservice.data']);
+    expect(data).toContain('[REDACTED]');
+    expect(data).not.toContain('"p"');
+    t.reset();
+    expect(() => c.handle({ MessageId: 'm4', Body: 'plain boom' })).toThrow('fail');
+    data = String(byName('SqsConsumer.handle')!.attributes['nestjs.microservice.data']);
+    expect(data).toContain('plain boom');
+  });
+
+  it('metadata survives wrapping', () => {
+    const wrapped = SqsConsumer.prototype.handle;
+    expect(Reflect.getMetadata(SQS, wrapped)).toEqual({ name: 'orders' });
+    expect(Reflect.getMetadata(SQS, SqsConsumer.prototype.handleBatch)).toEqual({ name: 'orders', batch: true });
   });
 });
