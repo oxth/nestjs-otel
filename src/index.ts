@@ -9,3 +9,4 @@ export type { RedactOptions } from './redact/redactor';
 export { OtelLogger, type OtelLoggerOptions } from './logs/otel-logger';
 export { MetricService } from './metrics/metric.service';
 export { Counter, Histogram } from './metrics/decorators';
+export { extractContext, injectContext, withContext } from './propagation/helpers';
