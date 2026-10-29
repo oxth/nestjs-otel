@@ -273,7 +273,9 @@ allow-list with `OTEL_NODE_ENABLED_INSTRUMENTATIONS`.
 MongoDB, Redis), so it needs Docker. Without Docker the suite is skipped; `REQUIRE_DOCKER=1` makes that a failure
 (CI sets it). Select versions with `NEST_VERSION` (default `12`), `TYPEORM_VERSION` (default `^1`), `MIKRO_VERSION`
 (default `^7`) and `BULLMQ_VERSION` (default `^6.5.1`; `@nestjs/bullmq` follows the Nest major), e.g.
-`NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 BULLMQ_VERSION=5.24.0 pnpm test:db`.
+`NEST_VERSION=11 TYPEORM_VERSION=^0.3 MIKRO_VERSION=^6 BULLMQ_VERSION=5.24.0 pnpm test:db`. `BULLMQ_VERSION`
+also selects the BullMQ that the in-process suite (`test/db/bullmq.db.test.ts`) loads: major 5 uses the `bullmq-5`
+dev dependency alias (pinned to `5.24.0`, the supported floor), anything else uses `bullmq`.
 
 ## Queues (BullMQ)
 
@@ -303,8 +305,9 @@ The `process` span is a child of the `add` span, and retried attempts stay in th
   (`messaging.operation.type = send`).
 - Workers: `process` (`process emails`, `messaging.operation.type = process`), one per job attempt.
 
-Internal BullMQ operations are not traced: polling for jobs, lock renewal, stalled-job checks and admin calls
-(`getJob`, `getJobs`, ...) run with tracing suppressed. An idle worker records no spans.
+Other operations BullMQ traces internally (polling for jobs, lock renewal, stalled-job checks, `pause`, `resume`,
+`close`, `clean`, ...) get no span and run with tracing suppressed. Read-only calls such as `getJob` and `getJobs`
+are not traced by BullMQ at all, so they get no span either. An idle worker records no spans.
 
 Span attributes: `messaging.system = bullmq`, `messaging.operation.name`, `messaging.operation.type`,
 `messaging.destination.name` (the queue), `messaging.message.id` (the job id), `messaging.batch.message_count`, and
@@ -327,8 +330,10 @@ Caveats:
 
 - **`FlowProducer`**: BullMQ only propagates trace context to flow nodes that have an `opts` object. Pass
   `opts: {}` (or any options) on each node to keep children in the flow's trace. The same applies to `bullmq-otel`.
-- A job added without propagated context (for example with `telemetry: { omitContext: true }`, or by a producer
-  without telemetry) starts its own trace. It is not attached to whatever span the worker was created in.
+- A job added without propagated context (by a producer without telemetry, or, on BullMQ 6 only, with
+  `telemetry: { omitContext: true }`; BullMQ 5.24 ignores that option) starts its own trace on both majors: its
+  `process` span is a root and is not attached to whatever span the worker was created in. The processor still
+  runs under that `process` span, so its spans, attempts, outcome and errors are recorded as usual.
 
 ### Job data and masking
 
@@ -366,6 +371,9 @@ Meter `@oxth/nestjs-otel`, attributes `messaging.system`, `messaging.destination
 | `messaging.process.duration` | histogram, `s` | Processor time; `error.type` on failure. |
 | `bullmq.job.wait_time` | histogram, `s` | Enqueue (plus delay) to start; first attempt only. |
 
+Both histograms use second-based bucket boundaries (`messaging.process.duration` from 5 ms to 10 s,
+`bullmq.job.wait_time` from 10 ms to 1 h) instead of the SDK's millisecond-oriented defaults.
+
 ### Not traced
 
 Sandboxed processors (a processor file path, which BullMQ runs in a child process) are not instrumented inside the
@@ -374,6 +382,10 @@ child. Only the `process` span in the parent is recorded.
 ### Disabling
 
 Turn off by name with `OTEL_NODE_DISABLED_INSTRUMENTATIONS=bullmq`.
+
+Disabling the instrumentation at runtime (`instrumentation.disable()`) affects only new `Queue`, `Worker` and
+`FlowProducer` instances. A `Queue` or `Worker` that has already run an operation keeps the telemetry stored in its
+options and keeps recording (an existing `FlowProducer` without its own `telemetry` stops being traced).
 
 ## Decorators, `TraceService` and `MetricService`
 
