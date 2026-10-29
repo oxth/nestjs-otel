@@ -4,6 +4,7 @@ export interface DbUrls {
   postgres: string;
   mysql: string;
   mongo: string;
+  redis: string;
 }
 
 const PASSWORD = 'test';
@@ -44,9 +45,16 @@ function mongo(): Promise<StartedTestContainer> {
     .start();
 }
 
-/** Starts Postgres 17, MySQL 8.4 and Mongo 8 in parallel. */
+function redis(): Promise<StartedTestContainer> {
+  return new GenericContainer('redis:8')
+    .withExposedPorts(6379)
+    .withWaitStrategy(Wait.forLogMessage(/Ready to accept connections/))
+    .start();
+}
+
+/** Starts Postgres 17, MySQL 8.4, Mongo 8 and Redis 8 in parallel. */
 export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<void> }> {
-  const results = await Promise.allSettled([postgres(), mysql(), mongo()]);
+  const results = await Promise.allSettled([postgres(), mysql(), mongo(), redis()]);
   const started = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value] : []));
   const stop = async (): Promise<void> => {
     await Promise.all(started.map((c) => c.stop()));
@@ -56,13 +64,14 @@ export async function startDatabases(): Promise<{ urls: DbUrls; stop(): Promise<
     await stop();
     throw failed.reason;
   }
-  const [pg, my, mg] = started;
+  const [pg, my, mg, rd] = started;
   const at = (c: StartedTestContainer, port: number) => `${c.getHost()}:${c.getMappedPort(port)}`;
   return {
     urls: {
       postgres: `postgres://postgres:${PASSWORD}@${at(pg, 5432)}/${DATABASE}`,
       mysql: `mysql://root:${PASSWORD}@${at(my, 3306)}/${DATABASE}`,
       mongo: `mongodb://${at(mg, 27017)}/${DATABASE}`,
+      redis: `redis://${at(rd, 6379)}`,
     },
     stop,
   };

@@ -10,7 +10,7 @@ declare module 'vitest' {
   }
 }
 
-/** Installs and builds the e2e fixture app, then starts Postgres, MySQL and Mongo containers. */
+/** Installs and builds the e2e fixture app, then starts Postgres, MySQL, Mongo and Redis containers. */
 export default async function setup(project: TestProject): Promise<(() => Promise<void>) | undefined> {
   try {
     await getContainerRuntimeClient();
